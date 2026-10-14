@@ -1,0 +1,41 @@
+{
+  "name": "cotiq",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:web": "vite",
+    "dev:api": "node --watch server/index.js",
+    "start": "node server/index.js",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test": "node --test server/payment-security.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "connect-pg-simple": "^10.0.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "express-session": "^1.18.2",
+    "helmet": "^8.1.0",
+    "lucide-react": "^1.55.0",
+    "mercadopago": "^3.6.1",
+    "pg": "^8.16.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.6.1",
+    "concurrently": "^9.1.2",
+    "oxlint": "^1.81.0",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^3.4.19",
+    "vite": "^8.3.0"
+  }
+}

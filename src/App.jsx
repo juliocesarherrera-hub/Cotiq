@@ -1,0 +1,2537 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { LEGAL_TERMS_VERSION } from '../legal-config.js';
+import { 
+  FileText, 
+  Plus, 
+  Trash2, 
+  Mic, 
+  Printer, 
+  Eye, 
+  Send, 
+  Users, 
+  Package, 
+  Settings, 
+  X, 
+  Search, 
+  Phone, 
+  MapPin, 
+  PenTool, 
+  Upload, 
+  Image as ImageIcon, 
+  RotateCcw,
+  Sparkles,
+  AlertTriangle,
+  Camera,
+  Copy,
+  ArrowRightLeft,
+  Check,
+  ShieldCheck,
+  Lock,
+  Calculator,
+  ExternalLink, 
+  CreditCard,
+  Award,
+  Zap,
+  WifiOff,
+  Wifi
+} from 'lucide-react';
+
+async function readApiResponse(response, fallbackMessage) {
+  const responseText = await response.text();
+  let data = {};
+
+  if (responseText) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error(`${fallbackMessage} El servidor respondió con un formato inesperado (HTTP ${response.status}).`);
+    }
+  }
+
+  if (!response.ok) {
+    const diagnostic = data.diagnostic;
+    const diagnosticDetails = diagnostic
+      ? [
+        `HTTP ${diagnostic.status}`,
+        diagnostic.errorCode,
+        diagnostic.providerMessage,
+        ...(Array.isArray(diagnostic.causes)
+          ? diagnostic.causes.map((cause) => [cause.code, cause.description].filter(Boolean).join(': '))
+          : [])
+      ].filter(Boolean).join(' | ')
+      : '';
+    const message = data.error || `${fallbackMessage} (HTTP ${response.status}).`;
+    throw new Error(diagnosticDetails ? `${message} Diagnóstico de Mercado Pago: ${diagnosticDetails}` : message);
+  }
+
+  if (!responseText) {
+    throw new Error(`${fallbackMessage} El servidor devolvió una respuesta vacía.`);
+  }
+
+  return data;
+}
+
+function normalizePendingOfflineQuotes(value) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry === 'string') return [{ id: entry, userId: null }];
+    if (entry && typeof entry.id === 'string') {
+      return [{ id: entry.id, userId: typeof entry.userId === 'string' ? entry.userId : null }];
+    }
+    return [];
+  });
+}
+
+function readMigratedLocalStorage(key, previousKey) {
+  let value = localStorage.getItem(key);
+  if (value === null) {
+    value = localStorage.getItem(previousKey);
+    if (value !== null) localStorage.setItem(key, value);
+  }
+  if (value !== null) localStorage.removeItem(previousKey);
+  return value;
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('quotes'); // 'quotes' | 'clients' | 'catalog' | 'settings' | 'plans'
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'editor' | 'preview' | 'client_web'
+  const [statusFilter, setStatusFilter] = useState('todos');
+
+  // Estado del Sistema de Licencias Funcional
+  const [userPlan, setUserPlan] = useState('gratis');
+  const [creditsRemaining, setCreditsRemaining] = useState(0);
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [selectedPlanToBuy, setSelectedPlanToBuy] = useState(null);
+  const [account, setAccount] = useState(null);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [pendingOfflineQuotes, setPendingOfflineQuotes] = useState([]);
+  const [isSyncingOfflineQuotes, setIsSyncingOfflineQuotes] = useState(false);
+  const [authMode, setAuthMode] = useState('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+  const [legalAccepted, setLegalAccepted] = useState(false);
+
+  // Estado de Empresa (Emisor)
+  const [company, setCompany] = useState({
+    name: '',
+    tagline: '',
+    phone: '',
+    email: '',
+    rfc: '',
+    address: '',
+    bank: '',
+    clabe: '',
+    bankHolder: '',
+    logo: '',
+    defaultTerms: ''
+  });
+
+  const [showClientModal, setShowClientModal] = useState(false);
+  const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [showSignatureModal, setShowSignatureModal] = useState(false);
+  const [signatureTarget, setSignatureTarget] = useState('client');
+
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const isSyncingOfflineQuotesRef = useRef(false);
+
+  const [newClient, setNewClient] = useState({ name: '', contact: '', phone: '', email: '', rfc: '', location: '' });
+  const [clientSearch, setClientSearch] = useState('');
+
+  const [newCatalogItem, setNewCatalogItem] = useState({ concept: '', unit: 'Servicio', price: '' });
+  const [catalogSearch, setCatalogSearch] = useState('');
+
+  const [clients, setClients] = useState([]);
+  const [catalog, setCatalog] = useState([
+    { id: 1, concept: 'Instalación de Minisplit 1.5 Ton Inverter', unit: 'Servicio', price: 3200 },
+    { id: 2, concept: 'Suministro y colocación de Muro de Tablaroca', unit: 'm²', price: 420 },
+    { id: 3, concept: 'Pintura vinílica acrílica a 2 manos', unit: 'm²', price: 140 }
+  ]);
+
+  const [quotes, setQuotes] = useState([]);
+
+  // Calculadora Privada de Margen
+  const [showCalculator, setShowCalculator] = useState(false);
+  const [costMaterials, setCostMaterials] = useState('');
+  const [costLabor, setCostLabor] = useState('');
+
+  // Cotización Activa
+  const [activeQuote, setActiveQuote] = useState({
+    id: 'COT-' + Math.floor(1000 + Math.random() * 9000),
+    type: 'Cotización',
+    status: 'Borrador',
+    date: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }),
+    validityDays: '15',
+    inflationClause: true,
+    executionDays: '',
+    clientName: '',
+    clientContact: '',
+    clientPhone: '',
+    clientEmail: '',
+    clientRfc: '',
+    projectLocation: '',
+    scope: '',
+    exclusions: 'No incluye licencias municipales, retiro de escombro fuera de obra ni trabajos eléctricos no especificados.',
+    warrantyInfo: '6 meses de garantía sobre defectos de instalación y mano de obra.',
+    paymentMilestones: '50% Anticipo al autorizar, 30% Avance al 50% de obra, 20% Finiquito contra entrega.',
+    items: [{ id: Date.now(), quantity: 1, unit: 'Servicio', description: '', unitPrice: '' }],
+    photos: [],
+    advancePercent: '50',
+    discount: '0',
+    includeIVA: true,
+    signatureClient: '',
+    signatureIssuer: ''
+  });
+
+  const [smartPromptText, setSmartPromptText] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [toast, setToast] = useState('');
+
+  useEffect(() => {
+    try {
+      const savedCompany = readMigratedLocalStorage('cotiq_company', 'pf_company');
+      const savedClients = readMigratedLocalStorage('cotiq_clients', 'pf_clients');
+      const savedCatalog = readMigratedLocalStorage('cotiq_catalog', 'pf_catalog');
+      const savedQuotes = readMigratedLocalStorage('cotiq_quotes', 'pf_quotes');
+      const savedPendingQuotes = readMigratedLocalStorage('cotiq_pending_quote_ids', 'pf_pending_quote_ids');
+
+      if (savedCompany) setCompany(JSON.parse(savedCompany));
+      if (savedClients) {
+        const parsed = JSON.parse(savedClients);
+        if (Array.isArray(parsed)) setClients(parsed);
+      }
+      if (savedCatalog) {
+        const parsed = JSON.parse(savedCatalog);
+        if (Array.isArray(parsed)) setCatalog(parsed);
+      }
+      if (savedQuotes) {
+        const parsed = JSON.parse(savedQuotes);
+        if (Array.isArray(parsed)) setQuotes(parsed);
+      }
+      if (savedPendingQuotes) {
+        const parsed = JSON.parse(savedPendingQuotes);
+        setPendingOfflineQuotes(normalizePendingOfflineQuotes(parsed));
+      }
+      readMigratedLocalStorage('cotiq_account_id', 'pf_account_id');
+      localStorage.removeItem('pf_plan');
+      localStorage.removeItem('pf_credits');
+      localStorage.removeItem('cotiq_plan');
+      localStorage.removeItem('cotiq_credits');
+    } catch (e) {
+      console.error("Error al cargar memoria:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    const updateOnlineStatus = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+    return () => {
+      window.removeEventListener('online', updateOnlineStatus);
+      window.removeEventListener('offline', updateOnlineStatus);
+    };
+  }, []);
+
+  const notify = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 3000);
+  };
+
+  const handleClearAllStorage = () => {
+    if (confirm("¿Deseas restablecer todos los datos guardados para iniciar 100% desde cero?")) {
+      localStorage.clear();
+      window.location.reload();
+    }
+  };
+
+  const saveCompanyData = (newCompany) => {
+    setCompany(newCompany);
+    localStorage.setItem('cotiq_company', JSON.stringify(newCompany));
+    notify('Perfil de empresa guardado');
+  };
+
+  const saveQuotesList = (newQuotes) => {
+    setQuotes(newQuotes);
+    localStorage.setItem('cotiq_quotes', JSON.stringify(newQuotes));
+  };
+
+  const savePendingOfflineQuotes = (pendingQuotes) => {
+    setPendingOfflineQuotes(pendingQuotes);
+    localStorage.setItem('cotiq_pending_quote_ids', JSON.stringify(pendingQuotes));
+  };
+
+  const applyAccountSnapshot = (user) => {
+    setAccount(user);
+    localStorage.setItem('cotiq_account_id', String(user.id));
+    const plan = ['vitalicia', 'creditos'].includes(user.plan) ? user.plan : 'gratis';
+    const credits = Number(user.credits);
+    setUserPlan(plan);
+    setCreditsRemaining(credits);
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    fetch('/api/auth/me')
+      .then(async (response) => {
+        if (response.status === 401) return null;
+        const data = await readApiResponse(response, 'No se pudo comprobar la sesión.');
+        return data.user;
+      })
+      .then((user) => {
+        if (active && user) applyAccountSnapshot(user);
+      })
+      .catch((error) => {
+        console.error('Error al comprobar la sesión:', error);
+        if (active) setAuthError('No se pudo comprobar la sesión. Revisa que el servidor esté disponible.');
+      })
+      .finally(() => {
+        if (active) setIsCheckingSession(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isOnline || pendingOfflineQuotes.length === 0 || isSyncingOfflineQuotesRef.current) return undefined;
+
+    let active = true;
+    const validateOfflineQuotes = async () => {
+      isSyncingOfflineQuotesRef.current = true;
+      setIsSyncingOfflineQuotes(true);
+      try {
+        let currentAccount = account;
+        if (!currentAccount) {
+          const sessionResponse = await fetch('/api/auth/me');
+          if (sessionResponse.status === 401) {
+            notify('Conexión recuperada. Inicia sesión para validar los borradores guardados sin conexión.');
+            return;
+          }
+          const sessionData = await readApiResponse(sessionResponse, 'No se pudo validar la sesión.');
+          currentAccount = sessionData.user;
+        }
+
+        let remainingQuotes = [...pendingOfflineQuotes];
+        for (const pendingQuote of pendingOfflineQuotes) {
+          if (!active) return;
+          const quoteId = pendingQuote.id;
+          if (pendingQuote.userId && pendingQuote.userId !== String(currentAccount.id)) {
+            notify('Inicia sesión con la misma cuenta que usabas al guardar estos borradores.');
+            return;
+          }
+          const response = await fetch('/api/credits/consume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ quoteId })
+          });
+          if (response.status === 401) {
+            if (active) {
+              if (remainingQuotes.length !== pendingOfflineQuotes.length) {
+                savePendingOfflineQuotes(remainingQuotes);
+              }
+              setAccount(null);
+            }
+            notify('Inicia sesión para validar los créditos de tus borradores pendientes.');
+            return;
+          }
+          if (response.status === 402) {
+            notify('Tus borradores siguen guardados en este dispositivo, pero necesitas créditos para validarlos.');
+            break;
+          }
+
+          const result = await readApiResponse(response, 'No se pudo validar el crédito del borrador.');
+
+          remainingQuotes = remainingQuotes.filter((entry) => entry.id !== quoteId);
+          if (active) {
+            currentAccount = { ...currentAccount, plan: result.plan, credits: Number(result.credits) };
+          }
+        }
+
+        if (active) {
+          if (remainingQuotes.length !== pendingOfflineQuotes.length) {
+            savePendingOfflineQuotes(remainingQuotes);
+          }
+          if (currentAccount !== account) applyAccountSnapshot(currentAccount);
+          if (remainingQuotes.length === 0) {
+            notify('Créditos validados. Tus cotizaciones siguen guardadas en este dispositivo.');
+          }
+        }
+      } catch (error) {
+        console.error('No se pudieron validar los borradores sin conexión:', error);
+        if (active) notify('No se pudieron validar los borradores. Permanecen guardados en este dispositivo.');
+      } finally {
+        isSyncingOfflineQuotesRef.current = false;
+        if (active) setIsSyncingOfflineQuotes(false);
+      }
+    };
+
+    validateOfflineQuotes();
+    return () => {
+      active = false;
+    };
+  }, [account, isOnline, pendingOfflineQuotes]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const purchaseId = params.get('purchase_id');
+    if (params.get('mp_payment') !== 'return' || !purchaseId) return undefined;
+
+    let active = true;
+    window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+
+    const checkPurchase = async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        if (!active) return;
+        const response = await fetch(`/api/purchases/${encodeURIComponent(purchaseId)}`);
+        const data = await readApiResponse(response, 'No se pudo consultar el pago.');
+        if (!active) return;
+
+        if (data.purchase.fulfilled) {
+          if (active) {
+            applyAccountSnapshot(data.user);
+            notify('Pago confirmado. Tu cuenta ya fue actualizada.');
+          }
+          return;
+        }
+
+        if (['rejected', 'cancelled', 'refunded'].includes(data.purchase.status)) {
+          if (active) notify('El pago no fue aprobado. Puedes intentarlo de nuevo desde Planes.');
+          return;
+        }
+
+        if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+
+      if (active) notify('El pago sigue pendiente de confirmación. Tu cuenta se actualizará al recibir la confirmación.');
+    };
+
+    checkPurchase().catch((error) => {
+      console.error('Error al verificar el pago:', error);
+      if (active) notify(error.message);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault();
+    if (!isOnline) {
+      setAuthError('El inicio de sesión requiere conexión. Tus cotizaciones locales siguen disponibles.');
+      return;
+    }
+    setIsAuthenticating(true);
+    setAuthError('');
+
+    try {
+      const response = await fetch(`/api/auth/${authMode === 'register' ? 'register' : 'login'}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: authEmail,
+          password: authPassword,
+          ...(authMode === 'register'
+            ? { acceptedTermsVersion: LEGAL_TERMS_VERSION, confirmedAdult: legalAccepted }
+            : {})
+        })
+      });
+      const data = await readApiResponse(response, 'No se pudo validar la cuenta.');
+
+      applyAccountSnapshot(data.user);
+      setAuthPassword('');
+      setCheckoutError('');
+    } catch (error) {
+      console.error('Error de autenticación:', error);
+      setAuthError(error.message || 'No se pudo conectar con el servidor.');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleMercadoPagoPayment = async () => {
+    if (!selectedPlanToBuy) return;
+    if (!isOnline) {
+      setCheckoutError('Los pagos requieren conexión a internet. Tu información local no se verá afectada.');
+      return;
+    }
+    if (!account) {
+      setCheckoutError('Inicia sesión o crea una cuenta para continuar con el pago.');
+      return;
+    }
+
+    setIsCheckingOut(true);
+    setCheckoutError('');
+    try {
+      const response = await fetch('/api/payments/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: selectedPlanToBuy.type === 'vitalicia' ? 'lifetime_pro' : 'credits_50',
+          acceptedTermsVersion: LEGAL_TERMS_VERSION,
+          confirmedAdult: legalAccepted
+        })
+      });
+      if (response.status === 401) {
+        setAccount(null);
+        setUserPlan('gratis');
+        setCreditsRemaining(0);
+      }
+      const data = await readApiResponse(response, 'No se pudo crear el pago.');
+      if (!data.checkoutUrl) throw new Error('El servidor no devolvió el enlace de pago.');
+      window.location.assign(data.checkoutUrl);
+    } catch (error) {
+      console.error('Error al conectar con la API de cobro:', error);
+      setCheckoutError(error.message || 'No se pudo comunicar con el servidor de pago.');
+      setIsCheckingOut(false);
+    }
+  };
+
+  const handleSaveActiveQuote = async () => {
+    const existingIdx = quotes.findIndex(q => q.id === activeQuote.id);
+    let updated = [];
+    if (existingIdx !== -1) {
+      updated = [...quotes];
+      updated[existingIdx] = activeQuote;
+    } else if (!isOnline) {
+      updated = [activeQuote, ...quotes];
+      const pendingQuote = {
+        id: activeQuote.id,
+        userId: account?.id ? String(account.id) : localStorage.getItem('cotiq_account_id')
+      };
+      savePendingOfflineQuotes([
+        ...pendingOfflineQuotes.filter((entry) => entry.id !== activeQuote.id),
+        pendingQuote
+      ]);
+    } else {
+      try {
+        const response = await fetch('/api/credits/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quoteId: activeQuote.id })
+        });
+        if (response.status === 401) {
+          setAccount(null);
+          setUserPlan('gratis');
+          setCreditsRemaining(0);
+        }
+        const result = await readApiResponse(response, 'No se pudo guardar la cotización.');
+        setUserPlan(result.plan);
+        setCreditsRemaining(Number(result.credits));
+        setAccount((current) => current
+          ? { ...current, plan: result.plan, credits: Number(result.credits) }
+          : current);
+      } catch (error) {
+        alert(error.message || 'No se pudo validar tu licencia. Inicia sesión e inténtalo de nuevo.');
+        setActiveTab('plans');
+        return;
+      }
+      updated = [activeQuote, ...quotes];
+    }
+    saveQuotesList(updated);
+    notify(existingIdx === -1 && !isOnline
+      ? `Borrador ${activeQuote.id} guardado en este dispositivo. El crédito se validará al reconectar.`
+      : `Documento ${activeQuote.id} guardado con éxito`);
+  };
+
+  const handleCreateNewQuote = () => {
+    if (isOnline && (!account || (userPlan !== 'vitalicia' && creditsRemaining <= 0))) {
+      alert(!account
+        ? 'Inicia sesión y adquiere créditos o una licencia vitalicia para crear cotizaciones.'
+        : 'Te has quedado sin créditos. Adquiere un paquete o una licencia vitalicia.');
+      setActiveTab('plans');
+      return;
+    }
+
+    setActiveQuote({
+      id: 'COT-' + Math.floor(1000 + Math.random() * 9000),
+      type: 'Cotización',
+      status: 'Borrador',
+      date: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }),
+      validityDays: '15',
+      inflationClause: true,
+      executionDays: '',
+      clientName: '',
+      clientContact: '',
+      clientPhone: '',
+      clientEmail: '',
+      clientRfc: '',
+      projectLocation: '',
+      scope: '',
+      exclusions: 'No incluye licencias municipales, retiro de escombro fuera de obra ni trabajos eléctricos no especificados.',
+      warrantyInfo: '6 meses de garantía sobre defectos de instalación y mano de obra.',
+      paymentMilestones: '50% Anticipo al autorizar, 30% Avance al 50% de obra, 20% Finiquito contra entrega.',
+      items: [{ id: Date.now(), quantity: 1, unit: 'Servicio', description: '', unitPrice: '' }],
+      photos: [],
+      advancePercent: '50',
+      discount: '0',
+      includeIVA: true,
+      signatureClient: '',
+      signatureIssuer: ''
+    });
+    setCostMaterials('');
+    setCostLabor('');
+    setViewMode('editor');
+  };
+
+  const handleProcessSmartPrompt = () => {
+    if (!smartPromptText.trim()) return;
+
+    const segments = smartPromptText.split(/[,;\n]+/);
+    const newItems = [];
+
+    segments.forEach((seg, idx) => {
+      const matchNum = seg.match(/^(\d+)\s*(m2|m²|ml|m3|m³|pz|piezas|servicio|lote)?\s*(?:de|del)?\s*(.*?)\s*(?:a|\$|de)?\s*(\d+)\s*(?:pesos|mxn)?$/i);
+      
+      if (matchNum) {
+        const qty = matchNum[1] || 1;
+        let u = matchNum[2] ? matchNum[2].toLowerCase() : 'Servicio';
+        if (u === 'm2' || u === 'm²') u = 'm²';
+        else if (u === 'ml') u = 'ml';
+        else if (u === 'pz' || u === 'piezas') u = 'Pieza';
+        else u = 'Servicio';
+
+        const desc = matchNum[3].trim();
+        const price = matchNum[4];
+
+        newItems.push({
+          id: Date.now() + idx,
+          quantity: qty,
+          unit: u,
+          description: desc.charAt(0).toUpperCase() + desc.slice(1),
+          unitPrice: price
+        });
+      } else if (seg.trim().length > 3) {
+        newItems.push({
+          id: Date.now() + idx,
+          quantity: 1,
+          unit: 'Servicio',
+          description: seg.trim(),
+          unitPrice: ''
+        });
+      }
+    });
+
+    if (newItems.length > 0) {
+      setActiveQuote(prev => ({
+        ...prev,
+        items: [...(prev.items || []).filter(i => (i.description || '').trim() !== ''), ...newItems]
+      }));
+      setSmartPromptText('');
+      notify(`${newItems.length} partida(s) generada(s) automáticamente`);
+    } else {
+      notify('Ejemplo válido: "2 minisplit a 3200 pesos, 50 m2 de tablaroca a 420"');
+    }
+  };
+
+  const handlePhotoUpload = (e) => {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setActiveQuote(prev => ({
+          ...prev,
+          photos: [...(prev.photos || []), reader.result]
+        }));
+      };
+      reader.readAsDataURL(file);
+    });
+    notify('Foto(s) de obra adjuntadas');
+  };
+
+  const handleDuplicateQuote = (quoteToDuplicate) => {
+    const cloned = {
+      ...quoteToDuplicate,
+      id: 'COT-' + Math.floor(1000 + Math.random() * 9000),
+      date: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }),
+      status: 'Borrador'
+    };
+    const updated = [cloned, ...quotes];
+    if (!isOnline) {
+      const pendingQuote = {
+        id: cloned.id,
+        userId: account?.id ? String(account.id) : localStorage.getItem('cotiq_account_id')
+      };
+      savePendingOfflineQuotes([...pendingOfflineQuotes, pendingQuote]);
+    }
+    saveQuotesList(updated);
+    setActiveQuote(cloned);
+    setViewMode('editor');
+    notify(`Cotización duplicada como ${cloned.id}`);
+  };
+
+  const handleConvertType = () => {
+    const nextType = activeQuote.type === 'Cotización' ? 'Recibo de Anticipo' : 'Cotización';
+    const nextStatus = nextType === 'Recibo de Anticipo' ? 'Aprobado' : activeQuote.status;
+    setActiveQuote({ ...activeQuote, type: nextType, status: nextStatus });
+    notify(`Convertido a ${nextType}`);
+  };
+
+  const handleSelectClient = (c) => {
+    setActiveQuote({
+      ...activeQuote,
+      clientName: c?.name || '',
+      clientContact: c?.contact || '',
+      clientPhone: c?.phone || '',
+      clientEmail: c?.email || '',
+      clientRfc: c?.rfc || '',
+      projectLocation: c?.location || ''
+    });
+    notify(`Cliente ${c?.name || 'Cargado'} seleccionado`);
+  };
+
+  const handleSelectCatalogItem = (item) => {
+    setActiveQuote({
+      ...activeQuote,
+      items: [
+        ...(activeQuote.items || []).filter(i => (i.description || '').trim() !== ''),
+        { id: Date.now(), quantity: 1, unit: item?.unit || 'Servicio', description: item?.concept || '', unitPrice: item?.price || 0 }
+      ]
+    });
+    notify(`Agregado: ${item?.concept || 'Servicio'}`);
+  };
+
+  const handleLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        saveCompanyData({ ...company, logo: reader.result });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const openSignatureModal = (target) => {
+    setSignatureTarget(target);
+    setShowSignatureModal(true);
+    setTimeout(() => {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#0f172a';
+      }
+    }, 150);
+  };
+
+  const startDrawing = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+    const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+    ctx.beginPath();
+    ctx.moveTo(clientX - rect.left, clientY - rect.top);
+    setIsDrawing(true);
+  };
+
+  const draw = (e) => {
+    if (!isDrawing) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+    const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+    ctx.lineTo(clientX - rect.left, clientY - rect.top);
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+  };
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const saveSignature = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dataUrl = canvas.toDataURL('image/png');
+    if (signatureTarget === 'client') {
+      setActiveQuote({ ...activeQuote, signatureClient: dataUrl });
+    } else {
+      setActiveQuote({ ...activeQuote, signatureIssuer: dataUrl });
+    }
+    setShowSignatureModal(false);
+    notify('Firma guardada');
+  };
+
+  const toggleVoice = () => {
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Speech) {
+      alert("Navegador no compatible con dictado por voz. Usa Google Chrome.");
+      return;
+    }
+
+    if (isListening) {
+      setIsListening(false);
+      return;
+    }
+
+    const rec = new Speech();
+    rec.lang = 'es-MX';
+    rec.continuous = true;
+
+    rec.onstart = () => setIsListening(true);
+    rec.onresult = (e) => {
+      let text = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        text += e.results[i][0].transcript;
+      }
+      setSmartPromptText(prev => prev ? prev + ' ' + text : text);
+    };
+    rec.onend = () => setIsListening(false);
+    rec.start();
+  };
+
+  // Cálculos Financieros
+  const grossSubtotal = (activeQuote.items || []).reduce((acc, i) => acc + (Number(i?.quantity || 0) * Number(i?.unitPrice || 0)), 0);
+  const discountVal = (grossSubtotal * (Number(activeQuote.discount) || 0)) / 100;
+  const netSubtotal = grossSubtotal - discountVal;
+  const ivaVal = activeQuote.includeIVA ? netSubtotal * 0.16 : 0;
+  const totalVal = netSubtotal + ivaVal;
+  const advanceVal = (totalVal * (Number(activeQuote.advancePercent) || 0)) / 100;
+
+  // Calculadora Privada de Margen
+  const totalDirectCost = (Number(costMaterials) || 0) + (Number(costLabor) || 0);
+  const netProfit = netSubtotal - totalDirectCost;
+  const marginPercent = netSubtotal > 0 ? ((netProfit / netSubtotal) * 100).toFixed(1) : '0';
+
+  const totalCotizadoSum = (quotes || []).reduce((acc, q) => {
+    const sub = (q?.items || []).reduce((s, i) => s + (Number(i?.quantity||0) * Number(i?.unitPrice||0)), 0);
+    return acc + sub + (q?.includeIVA ? sub * 0.16 : 0);
+  }, 0);
+
+  const totalAprobadoSum = (quotes || []).filter(q => q?.status === 'Aprobado').reduce((acc, q) => {
+    const sub = (q?.items || []).reduce((s, i) => s + (Number(i?.quantity||0) * Number(i?.unitPrice||0)), 0);
+    return acc + sub + (q?.includeIVA ? sub * 0.16 : 0);
+  }, 0);
+
+  const handleWhatsApp = () => {
+    const itemsFormatted = (activeQuote.items || [])
+      .map(i => `• *${i?.description || 'Partida'}*: ${i?.quantity || 1} ${i?.unit || 'Servicio'} x $${Number(i?.unitPrice || 0).toLocaleString('es-MX')} = *$${((i?.quantity||1) * (i?.unitPrice||0)).toLocaleString('es-MX')}*`)
+      .join('\n');
+
+    const text = `📋 *${(activeQuote.type || 'Cotización').toUpperCase()} NO. ${activeQuote.id}*\n` +
+      `🏢 *Emisor:* ${company.name || 'Servicios Especializados'}\n` +
+      `👤 *Cliente:* ${activeQuote.clientName || 'Cliente'}\n` +
+      `-----------------------------------\n` +
+      `${itemsFormatted}\n` +
+      `-----------------------------------\n` +
+      `Subtotal: $${netSubtotal.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n` +
+      `${activeQuote.includeIVA ? `IVA (16%): $${ivaVal.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n` : ''}` +
+      `💰 *TOTAL: $${totalVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} MXN*\n` +
+      `💵 *Anticipo (${activeQuote.advancePercent}%): $${advanceVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} MXN*\n\n` +
+      `🌐 *Ver portal web interactivo del cliente:* https://cotiq.app/cotizacion/${activeQuote.id}`;
+
+    const cleanPhone = (activeQuote.clientPhone || '').replace(/\D/g, '');
+    const url = cleanPhone ? `https://wa.me/52${cleanPhone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+  };
+
+  const qrUrl = company.clabe && isOnline ? `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=CLABE:${company.clabe}` : null;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-slate-800 pb-12">
+      
+      {toast && (
+        <div className="fixed bottom-5 right-5 z-50 bg-slate-100 text-slate-950 font-semibold text-xs px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2">
+          <Check className="w-4 h-4 text-emerald-600" /> {toast}
+        </div>
+      )}
+
+      {(!isOnline || pendingOfflineQuotes.length > 0) && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`print:hidden px-4 py-2 text-xs font-medium flex items-center justify-center gap-2 ${
+            isOnline
+              ? 'bg-amber-950 text-amber-200 border-b border-amber-800'
+              : 'bg-slate-800 text-slate-100 border-b border-slate-700'
+          }`}
+        >
+          {isOnline ? <Wifi className="w-4 h-4 shrink-0" /> : <WifiOff className="w-4 h-4 shrink-0" />}
+          <span>
+            {isOnline
+              ? isSyncingOfflineQuotes
+                ? `Validando créditos de ${pendingOfflineQuotes.length} borrador(es) guardado(s) sin conexión.`
+                : `${pendingOfflineQuotes.length} borrador(es) guardado(s) localmente esperan validación de crédito.`
+              : 'Sin conexión: puedes crear y guardar borradores. Inicio de sesión y pagos requieren internet.'}
+          </span>
+        </div>
+      )}
+
+      {/* Header con marca COTIQ */}
+      <header className="print:hidden border-b border-slate-800/80 bg-slate-900/80 sticky top-0 z-40 px-4 py-3 backdrop-blur-md">
+        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          
+          <div className="flex items-center gap-3">
+            {company.logo ? (
+              <img src={company.logo} alt="Logo" className="w-8 h-8 rounded-lg object-cover" />
+            ) : (
+              <div className="w-8 h-8 bg-emerald-500 text-slate-950 rounded-xl flex items-center justify-center font-black text-sm tracking-wider shadow-md shadow-emerald-500/20">
+                C
+              </div>
+            )}
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-extrabold text-base text-slate-100 tracking-tight">COTIQ</span>
+                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-mono flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" /> 
+                  {userPlan === 'vitalicia' ? 'VITALICIA PRO' : `CRÉDITOS: ${creditsRemaining}`}
+                </span>
+              </div>
+              <span className="text-[9px] text-slate-400 flex items-center gap-1">
+                <Lock className="w-2.5 h-2.5 text-emerald-500" /> Cifrado SSL 256-bit
+              </span>
+            </div>
+          </div>
+
+          <div className="w-full sm:w-auto min-w-0 max-w-full flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800/80 text-xs overflow-x-auto overscroll-x-contain">
+            <button
+              onClick={() => { setActiveTab('quotes'); setViewMode('list'); }}
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'quotes' ? 'bg-slate-800 text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" /> Cotizaciones
+            </button>
+
+            <button
+              onClick={() => setActiveTab('clients')}
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'clients' ? 'bg-slate-800 text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" /> Clientes
+            </button>
+
+            <button
+              onClick={() => setActiveTab('catalog')}
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'catalog' ? 'bg-slate-800 text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Package className="w-3.5 h-3.5" /> Catálogo
+            </button>
+
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'settings' ? 'bg-slate-800 text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5" /> Mi Empresa
+            </button>
+
+            <button
+              onClick={() => setActiveTab('plans')}
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'plans' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Award className="w-3.5 h-3.5 text-emerald-400" /> Licencia
+            </button>
+          </div>
+
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto p-4 sm:p-6">
+
+        {/* ==================== PESTAÑA 1: COTIZACIONES ==================== */}
+        {activeTab === 'quotes' && viewMode === 'list' && (
+          <div className="space-y-6">
+            
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
+                <span className="text-[11px] font-semibold text-slate-400 block mb-1">Total Cotizado</span>
+                <span className="text-xl font-bold text-slate-100">
+                  ${totalCotizadoSum.toLocaleString('es-MX', {minimumFractionDigits: 2})} <span className="text-xs font-normal text-slate-500">MXN</span>
+                </span>
+              </div>
+              <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
+                <span className="text-[11px] font-semibold text-slate-400 block mb-1">Monto Aprobado / Cerrado</span>
+                <span className="text-xl font-bold text-emerald-400">
+                  ${totalAprobadoSum.toLocaleString('es-MX', {minimumFractionDigits: 2})} <span className="text-xs font-normal text-slate-500">MXN</span>
+                </span>
+              </div>
+              <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-semibold text-slate-400 block">Total Registros</span>
+                  <span className="text-xl font-bold text-slate-100">{(quotes || []).length} Docs</span>
+                </div>
+                <button
+                  onClick={handleCreateNewQuote}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 transition-all"
+                >
+                  <Plus className="w-4 h-4" /> Nueva Cotización
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex gap-2">
+                {['todos', 'Borrador', 'Enviado', 'Aprobado'].map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setStatusFilter(st)}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium capitalize transition-all ${
+                      statusFilter === st ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {(quotes || []).length === 0 ? (
+              <div className="text-center py-16 bg-slate-900/30 border border-slate-800/60 rounded-2xl space-y-3">
+                <FileText className="w-10 h-10 text-slate-600 mx-auto opacity-40" />
+                <p className="text-xs text-slate-400">No hay cotizaciones registradas aún.</p>
+                <button
+                  onClick={handleCreateNewQuote}
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-4 py-2 rounded-xl text-xs"
+                >
+                  Crear tu primera cotización
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {(quotes || [])
+                  .filter(q => statusFilter === 'todos' || q?.status === statusFilter)
+                  .map((q) => (
+                    <div key={q.id} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-start gap-3 hover:border-slate-700 transition-colors">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-slate-100">{q.id}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                            q?.status === 'Aprobado' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'
+                          }`}>
+                            {q?.type || 'Cotización'} • {q?.status || 'Borrador'}
+                          </span>
+                          {pendingOfflineQuotes.some((entry) => entry.id === q.id) && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-500/10 text-amber-300">
+                              Crédito pendiente
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-200 font-medium">{q?.clientName || 'Cliente sin nombre'}</p>
+                        <p className="text-[11px] text-slate-500">{q?.date}</p>
+                      </div>
+
+                      <div className="text-right space-y-2">
+                        <p className="text-sm font-bold text-slate-100">
+                          ${(q?.items || []).reduce((acc, i) => acc + (Number(i?.quantity||0) * Number(i?.unitPrice||0)), 0).toLocaleString('es-MX')}
+                        </p>
+                        <div className="flex gap-1 justify-end">
+                          <button
+                            onClick={() => handleDuplicateQuote(q)}
+                            title="Duplicar"
+                            className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-1.5 rounded-lg text-xs"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => { setActiveQuote(q); setViewMode('editor'); }}
+                            className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => { setActiveQuote(q); setViewMode('client_web'); }}
+                            title="Ver Link del Cliente"
+                            className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1"
+                          >
+                            <ExternalLink className="w-3 h-3" /> Web
+                          </button>
+                          <button
+                            onClick={() => { setActiveQuote(q); setViewMode('preview'); }}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded-lg text-xs font-semibold"
+                          >
+                            PDF
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ==================== EDITOR DE COTIZACIÓN ==================== */}
+        {activeTab === 'quotes' && viewMode === 'editor' && (
+          <div className="space-y-6">
+            
+            <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-4 gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-base font-bold text-slate-100">Editor de {activeQuote.type}</h1>
+                  <span className="text-xs text-slate-400 font-mono">({activeQuote.id})</span>
+                </div>
+                <p className="text-xs text-slate-400">Ingresa o autocompleta los datos del proyecto.</p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setShowCalculator(!showCalculator)}
+                  className={`px-3 py-1.5 text-xs rounded-xl font-semibold flex items-center gap-1.5 border transition-all ${
+                    showCalculator 
+                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
+                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                  }`}
+                >
+                  <Calculator className="w-3.5 h-3.5 text-amber-400" />
+                  {showCalculator ? 'Ocultar Margen Privado' : 'Calculadora de Margen Privado'}
+                </button>
+
+                <button
+                  onClick={handleConvertType}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs rounded-xl font-semibold flex items-center gap-1.5"
+                >
+                  <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-400" />
+                  {activeQuote.type === 'Cotización' ? 'Convertir a Recibo' : 'Convertir a Cotización'}
+                </button>
+
+                <button
+                  onClick={handleSaveActiveQuote}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs rounded-xl font-semibold"
+                >
+                  Guardar
+                </button>
+
+                <button
+                  onClick={() => setViewMode('client_web')}
+                  className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs rounded-xl font-bold flex items-center gap-1"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> Portal Cliente
+                </button>
+
+                <button
+                  onClick={() => setViewMode('preview')}
+                  className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs rounded-xl font-bold flex items-center gap-1 shadow-lg shadow-emerald-500/20"
+                >
+                  <Eye className="w-3.5 h-3.5" /> Ver PDF
+                </button>
+              </div>
+            </div>
+
+            {/* CALCULADORA PRIVADA DE MARGEN */}
+            {showCalculator && (
+              <div className="bg-amber-950/20 border border-amber-500/40 p-4 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
+                  <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                    <Calculator className="w-4 h-4 text-amber-400" /> Calculadora de Margen de Utilidad (Panel Privado)
+                  </span>
+                  <span className="text-[10px] text-amber-300/70 bg-amber-500/10 px-2 py-0.5 rounded">Solo visible para ti</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <label className="text-amber-200/80 block mb-1">Costo Insumos / Materiales ($)</label>
+                    <input 
+                      type="number"
+                      placeholder="0.00"
+                      value={costMaterials}
+                      onChange={(e) => setCostMaterials(e.target.value)}
+                      className="w-full bg-slate-950 border border-amber-500/30 rounded-xl p-2 text-slate-100 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-amber-200/80 block mb-1">Costo Mano de Obra ($)</label>
+                    <input 
+                      type="number"
+                      placeholder="0.00"
+                      value={costLabor}
+                      onChange={(e) => setCostLabor(e.target.value)}
+                      className="w-full bg-slate-950 border border-amber-500/30 rounded-xl p-2 text-slate-100 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="bg-slate-950 p-2 rounded-xl border border-amber-500/20 flex flex-col justify-center">
+                    <span className="text-[10px] text-slate-400 block">Costo Directo Total</span>
+                    <span className="font-bold text-slate-200 text-sm">${totalDirectCost.toLocaleString('es-MX', {minimumFractionDigits: 2})}</span>
+                  </div>
+
+                  <div className="bg-amber-500/10 p-2 rounded-xl border border-amber-500/30 flex flex-col justify-center">
+                    <span className="text-[10px] text-amber-300 block">Utilidad Neta Real</span>
+                    <span className="font-extrabold text-amber-400 text-base">${netProfit.toLocaleString('es-MX', {minimumFractionDigits: 2})} ({marginPercent}%)</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Generador Express por Texto / Dictado Mágico */}
+            <div className="bg-gradient-to-r from-emerald-950/40 to-slate-900 border border-emerald-500/30 rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-400" /> Generador Express por Texto o Voz
+                </span>
+                <button
+                  type="button"
+                  onClick={toggleVoice}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg border flex items-center gap-1 transition-colors ${
+                    isListening 
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse' 
+                      : 'bg-slate-950 text-slate-300 border-slate-700 hover:text-white'
+                  }`}
+                >
+                  <Mic className="w-3.5 h-3.5" />
+                  {isListening ? 'Escuchando...' : 'Dictar todo'}
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <input 
+                  type="text"
+                  placeholder='Escribe o dicta: "2 minisplit a 3200 pesos, 50 m2 de tablaroca a 420 pesos"'
+                  value={smartPromptText}
+                  onChange={(e) => setSmartPromptText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleProcessSmartPrompt()}
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  onClick={handleProcessSmartPrompt}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition-colors shadow-lg shadow-emerald-500/20 flex-shrink-0"
+                >
+                  Generar
+                </button>
+              </div>
+            </div>
+
+            {(clients || []).length > 0 && (
+              <div className="bg-slate-900/50 border border-slate-800 p-3 rounded-2xl flex items-center justify-between gap-2 overflow-x-auto">
+                <span className="text-xs font-semibold text-slate-400 flex items-center gap-1 flex-shrink-0">
+                  <Users className="w-3.5 h-3.5 text-emerald-400" /> Cargar Cliente:
+                </span>
+                <div className="flex gap-2">
+                  {clients.map(c => (
+                    <button
+                      key={c.id || Math.random()}
+                      onClick={() => handleSelectClient(c)}
+                      className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 rounded-lg border border-slate-700 transition-colors flex-shrink-0"
+                    >
+                      {c.name || 'Cliente'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Datos del Cliente */}
+            <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block">
+                1. Datos del Cliente (Receptor)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <input 
+                  type="text"
+                  placeholder="Ej. Juan Pérez / Obras & Mantenimiento"
+                  value={activeQuote.clientName}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, clientName: e.target.value })}
+                  className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                />
+                <input 
+                  type="text"
+                  placeholder="Ej. Arq. Carlos Mendoza"
+                  value={activeQuote.clientContact}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, clientContact: e.target.value })}
+                  className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                />
+                <input 
+                  type="text"
+                  placeholder="Ej. 4421234567"
+                  value={activeQuote.clientPhone}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, clientPhone: e.target.value })}
+                  className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                />
+                <input 
+                  type="text"
+                  placeholder="Ej. contacto@cliente.com"
+                  value={activeQuote.clientEmail}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, clientEmail: e.target.value })}
+                  className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                />
+                <input 
+                  type="text"
+                  placeholder="Ej. RFC del Cliente (Opcional)"
+                  value={activeQuote.clientRfc}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, clientRfc: e.target.value })}
+                  className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                />
+                <input 
+                  type="text"
+                  placeholder="Ej. Av. Hidalgo 456, Col. Centro, Querétaro, Qro."
+                  value={activeQuote.projectLocation}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, projectLocation: e.target.value })}
+                  className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                />
+              </div>
+            </div>
+
+            {/* Condiciones */}
+            <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block">
+                2. Alcance, Plazo, Esquema de Pagos y Exclusiones
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="text-slate-400 block mb-1 font-medium">Plazo de Ejecución (Días Hábiles)</label>
+                  <input 
+                    type="text"
+                    placeholder="Ej. 8 días hábiles a partir del anticipo"
+                    value={activeQuote.executionDays}
+                    onChange={(e) => setActiveQuote({ ...activeQuote, executionDays: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-400 block mb-1 font-medium">Garantía Escrita Ofrecida</label>
+                  <input 
+                    type="text"
+                    placeholder="Ej. 6 meses de garantía sobre mano de obra"
+                    value={activeQuote.warrantyInfo}
+                    onChange={(e) => setActiveQuote({ ...activeQuote, warrantyInfo: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-400 block mb-1 font-medium">Esquema de Pagos por Hitos</label>
+                  <input 
+                    type="text"
+                    placeholder="Ej. 50% Anticipo, 30% Avance, 20% Finiquito"
+                    value={activeQuote.paymentMilestones}
+                    onChange={(e) => setActiveQuote({ ...activeQuote, paymentMilestones: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1 text-xs">
+                <input 
+                  type="checkbox"
+                  id="inflationToggle"
+                  checked={activeQuote.inflationClause}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, inflationClause: e.target.checked })}
+                  className="rounded border-slate-800 text-emerald-500 focus:ring-0"
+                />
+                <label htmlFor="inflationToggle" className="text-slate-300">
+                  Incluir Cláusula de Ajuste por Inflación de Materiales
+                </label>
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1 text-xs font-medium">Alcance Incluido del Trabajo</label>
+                <textarea 
+                  rows={2}
+                  placeholder="Ej. Suministro, traslado, instalación y pruebas operativas..."
+                  value={activeQuote.scope}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, scope: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-rose-400 block mb-1 text-xs font-semibold flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Exclusiones (Lo que NO incluye el presupuesto)
+                </label>
+                <textarea 
+                  rows={2}
+                  placeholder="Ej. No incluye licencias municipales, retiro de escombro fuera de obra..."
+                  value={activeQuote.exclusions}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, exclusions: e.target.value })}
+                  className="w-full bg-slate-950 border border-rose-950/60 rounded-xl p-2.5 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-rose-500/50"
+                />
+              </div>
+            </div>
+
+            {/* Catálogo en 1 clic */}
+            {(catalog || []).length > 0 && (
+              <div className="bg-slate-900/50 border border-slate-800 p-3 rounded-2xl flex items-center justify-between gap-2 overflow-x-auto">
+                <span className="text-xs font-semibold text-slate-400 flex items-center gap-1 flex-shrink-0">
+                  <Package className="w-3.5 h-3.5 text-emerald-400" /> Insertar del Catálogo:
+                </span>
+                <div className="flex gap-2">
+                  {catalog.map(cat => (
+                    <button
+                      key={cat.id || Math.random()}
+                      onClick={() => handleSelectCatalogItem(cat)}
+                      className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 rounded-lg border border-slate-700 transition-colors flex-shrink-0"
+                    >
+                      + {cat?.concept} (${cat?.price})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Partidas */}
+            <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                  3. Catálogo de Partidas y Precios Unitarios
+                </span>
+                <button 
+                  onClick={() => setActiveQuote({
+                    ...activeQuote,
+                    items: [...(activeQuote.items || []), { id: Date.now(), quantity: 1, unit: 'Servicio', description: '', unitPrice: '' }]
+                  })}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-bold"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Agregar Partida
+                </button>
+              </div>
+
+              {(activeQuote.items || []).map((item) => (
+                <div key={item.id} className="grid grid-cols-12 gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800 items-center">
+                  <div className="col-span-2 sm:col-span-1">
+                    <input 
+                      type="number"
+                      placeholder="1"
+                      value={item.quantity}
+                      onChange={(e) => setActiveQuote({
+                        ...activeQuote,
+                        items: activeQuote.items.map(i => i.id === item.id ? { ...i, quantity: e.target.value } : i)
+                      })}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs text-center text-slate-100 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="col-span-3 sm:col-span-2">
+                    <select
+                      value={item.unit}
+                      onChange={(e) => setActiveQuote({
+                        ...activeQuote,
+                        items: activeQuote.items.map(i => i.id === item.id ? { ...i, unit: e.target.value } : i)
+                      })}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs text-slate-100 focus:outline-none"
+                    >
+                      <option value="Servicio">Servicio</option>
+                      <option value="Pieza">Pieza</option>
+                      <option value="m²">m²</option>
+                      <option value="m³">m³</option>
+                      <option value="ml">ml</option>
+                      <option value="Lote">Lote</option>
+                    </select>
+                  </div>
+
+                  <div className="col-span-4 sm:col-span-6">
+                    <input 
+                      type="text"
+                      placeholder="Ej. Suministro y montaje de Minisplit 1.5 Ton"
+                      value={item.description}
+                      onChange={(e) => setActiveQuote({
+                        ...activeQuote,
+                        items: activeQuote.items.map(i => i.id === item.id ? { ...i, description: e.target.value } : i)
+                      })}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs text-slate-100 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="col-span-2 sm:col-span-2">
+                    <input 
+                      type="number"
+                      placeholder="$ 0.00"
+                      value={item.unitPrice}
+                      onChange={(e) => setActiveQuote({
+                        ...activeQuote,
+                        items: activeQuote.items.map(i => i.id === item.id ? { ...i, unitPrice: e.target.value } : i)
+                      })}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs text-right text-slate-100 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="col-span-1 flex justify-center">
+                    {(activeQuote.items || []).length > 1 && (
+                      <button 
+                        onClick={() => setActiveQuote({
+                          ...activeQuote,
+                          items: activeQuote.items.filter(i => i.id !== item.id)
+                        })}
+                        className="text-slate-500 hover:text-rose-400 p-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Anexo Fotográfico */}
+            <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5 text-emerald-400" /> 4. Anexo Fotográfico del Sitio
+                </span>
+                <label className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1 rounded-lg font-semibold cursor-pointer inline-flex items-center gap-1">
+                  <Upload className="w-3.5 h-3.5" /> Subir Fotos
+                  <input type="file" accept="image/*" multiple onChange={handlePhotoUpload} className="hidden" />
+                </label>
+              </div>
+
+              {(activeQuote.photos || []).length > 0 ? (
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {activeQuote.photos.map((p, idx) => (
+                    <div key={idx} className="relative group rounded-xl overflow-hidden border border-slate-800 aspect-square">
+                      <img src={p} alt="Evidencia" className="w-full h-full object-cover" />
+                      <button
+                        onClick={() => setActiveQuote({ ...activeQuote, photos: activeQuote.photos.filter((_, i) => i !== idx) })}
+                        className="absolute top-1 right-1 bg-rose-600 text-white p-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-500 italic">No has adjuntado fotos del área de trabajo aún.</p>
+              )}
+            </div>
+
+            {/* Firmas Digitales */}
+            <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block">
+                5. Firmas Digitales
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Firma de Contratista / Emisor</span>
+                    <span className="font-semibold text-slate-200">{activeQuote.signatureIssuer ? '✓ Firma Capturada' : 'Sin Firma'}</span>
+                  </div>
+                  <button 
+                    onClick={() => openSignatureModal('issuer')}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1"
+                  >
+                    <PenTool className="w-3.5 h-3.5" /> Firmar
+                  </button>
+                </div>
+
+                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Firma del Cliente</span>
+                    <span className="font-semibold text-slate-200">{activeQuote.signatureClient ? '✓ Firma Capturada' : 'Sin Firma'}</span>
+                  </div>
+                  <button 
+                    onClick={() => openSignatureModal('client')}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1"
+                  >
+                    <PenTool className="w-3.5 h-3.5" /> Firmar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Resumen */}
+            <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-900/30 border border-slate-800 rounded-2xl text-xs">
+              <div className="flex items-center gap-4">
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Anticipo Requerido (%)</span>
+                  <input 
+                    type="number"
+                    value={activeQuote.advancePercent}
+                    onChange={(e) => setActiveQuote({ ...activeQuote, advancePercent: e.target.value })}
+                    className="w-20 bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-3">
+                  <input 
+                    type="checkbox"
+                    id="ivaToggle"
+                    checked={activeQuote.includeIVA}
+                    onChange={(e) => setActiveQuote({ ...activeQuote, includeIVA: e.target.checked })}
+                    className="rounded border-slate-800 text-slate-100 focus:ring-0"
+                  />
+                  <label htmlFor="ivaToggle" className="text-slate-300">Incluir IVA (16%)</label>
+                </div>
+              </div>
+
+              <div className="text-right">
+                <span className="text-slate-400 block text-[10px]">Total Final</span>
+                <span className="text-lg font-bold text-slate-100">
+                  ${totalVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} <span className="text-xs font-normal text-slate-400">MXN</span>
+                </span>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* ==================== VISTA PORTAL WEB DEL CLIENTE ==================== */}
+        {activeTab === 'quotes' && viewMode === 'client_web' && (
+          <div className="space-y-4 max-w-2xl mx-auto">
+            <div className="flex items-center justify-between bg-slate-900 p-3 rounded-2xl border border-slate-800 text-xs">
+              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                <ExternalLink className="w-3.5 h-3.5" /> Portal Web Interactivo para el Cliente
+              </span>
+              <button
+                onClick={() => setViewMode('editor')}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl font-semibold"
+              >
+                Volver al Editor
+              </button>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-6 text-slate-100 shadow-2xl">
+              <div className="flex justify-between items-start border-b border-slate-800 pb-4">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-100">{company.name || 'Empresa Emisora'}</h2>
+                  <p className="text-xs text-slate-400">{company.tagline || 'Servicios Especializados'}</p>
+                </div>
+                <div className="text-right">
+                  <span className="bg-emerald-500/10 text-emerald-400 px-3 py-1 rounded-full font-bold text-xs border border-emerald-500/20">
+                    {activeQuote.type} #{activeQuote.id}
+                  </span>
+                  <p className="text-[10px] text-slate-500 mt-1">{activeQuote.date}</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs space-y-1">
+                <span className="text-[10px] text-slate-500 uppercase font-bold">Cliente:</span>
+                <p className="font-bold text-slate-200">{activeQuote.clientName || 'Cliente'}</p>
+                {activeQuote.projectLocation && <p className="text-slate-400">Ubicación: {activeQuote.projectLocation}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-slate-300">Conceptos Presupuestados:</span>
+                <div className="space-y-1.5">
+                  {(activeQuote.items || []).map((item, idx) => (
+                    <div key={idx} className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center text-xs">
+                      <div>
+                        <p className="font-semibold text-slate-200">{item.description}</p>
+                        <span className="text-[10px] text-slate-500">{item.quantity} {item.unit} x ${Number(item.unitPrice||0).toLocaleString('es-MX')}</span>
+                      </div>
+                      <span className="font-bold text-emerald-400">${((item.quantity||1) * (item.unitPrice||0)).toLocaleString('es-MX')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-emerald-950/30 border border-emerald-500/30 p-4 rounded-2xl flex justify-between items-center text-xs">
+                <div>
+                  <span className="text-slate-400 block">Anticipo Requerido ({activeQuote.advancePercent}%)</span>
+                  <span className="text-lg font-black text-emerald-400">${advanceVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} MXN</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-400 block">Total Final</span>
+                  <span className="text-base font-bold text-slate-200">${totalVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} MXN</span>
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <button
+                  onClick={() => openSignatureModal('client')}
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                >
+                  <PenTool className="w-4 h-4" /> Firmar en Pantalla y Aceptar Cotización
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ==================== VISTA PREVIA PDF A4 ==================== */}
+        {activeTab === 'quotes' && viewMode === 'preview' && (
+          <div className="space-y-4">
+            
+            <div className="print:hidden flex items-center justify-between bg-slate-900 p-3 rounded-2xl border border-slate-800 text-xs">
+              <span className="text-slate-400 font-medium">Documento Formal A4 Membretado Pro</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="px-3.5 py-1.5 bg-slate-100 hover:bg-white text-slate-950 font-bold rounded-xl transition-colors flex items-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Guardar PDF
+                </button>
+                <button
+                  onClick={handleWhatsApp}
+                  className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-emerald-500/20"
+                >
+                  <Send className="w-3.5 h-3.5" /> Enviar por WhatsApp
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white text-slate-900 p-8 sm:p-12 rounded-2xl border border-slate-200 shadow-2xl max-w-3xl mx-auto print:shadow-none print:border-none print:p-0">
+              
+              <div className="flex justify-between items-start border-b-2 border-slate-900 pb-6 mb-6">
+                <div className="space-y-1">
+                  {company.logo && (
+                    <img src={company.logo} alt="Logo Empresa" className="max-h-14 max-w-xs object-contain mb-2" />
+                  )}
+                  <h1 className="font-extrabold text-xl text-slate-900 uppercase tracking-tight">
+                    {company.name || 'NOMBRE DE TU EMPRESA'}
+                  </h1>
+                  <p className="text-xs text-slate-600 font-medium">{company.tagline || 'Servicios Profesionales de Obra'}</p>
+                  {company.rfc && <p className="text-xs text-slate-500 font-mono">RFC: {company.rfc}</p>}
+                  <p className="text-xs text-slate-500">Tel: {company.phone || '—'} {company.email ? `• ${company.email}` : ''}</p>
+                  {company.address && <p className="text-xs text-slate-500">{company.address}</p>}
+                </div>
+
+                <div className="text-right">
+                  <h2 className="text-2xl font-black text-slate-900 tracking-wider uppercase">{activeQuote.type}</h2>
+                  <div className="mt-2 border border-slate-300 rounded overflow-hidden text-xs">
+                    <div className="grid grid-cols-2 bg-slate-100 font-bold border-b border-slate-300 text-center py-1 px-2">
+                      <span>FOLIO</span>
+                      <span>FECHA</span>
+                    </div>
+                    <div className="grid grid-cols-2 text-center py-1 px-2 font-medium">
+                      <span>{activeQuote.id}</span>
+                      <span>{activeQuote.date}</span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">Vigencia: {activeQuote.validityDays} días naturales</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 text-xs grid grid-cols-2 gap-4">
+                <div>
+                  <span className="font-bold text-slate-700 block mb-1 uppercase tracking-wider text-[10px]">Preparado para:</span>
+                  <p className="font-bold text-slate-900 text-sm">{activeQuote.clientName || 'Cliente no especificado'}</p>
+                  {activeQuote.clientContact && <p className="text-slate-600">At'n: {activeQuote.clientContact}</p>}
+                  {activeQuote.clientPhone && <p className="text-slate-600">Teléfono: {activeQuote.clientPhone}</p>}
+                  {activeQuote.clientEmail && <p className="text-slate-600">Email: {activeQuote.clientEmail}</p>}
+                </div>
+                <div className="text-right space-y-1">
+                  <span className="font-bold text-slate-700 block mb-1 uppercase tracking-wider text-[10px]">Ubicación y Condiciones:</span>
+                  <p className="text-slate-700 font-medium">{activeQuote.projectLocation || 'En sitio'}</p>
+                  {activeQuote.executionDays && <p className="text-[11px] text-slate-600 font-semibold pt-1">⏱️ Plazo: {activeQuote.executionDays}</p>}
+                  {activeQuote.warrantyInfo && <p className="text-[11px] text-emerald-700 font-semibold">🛡️ Garantía: {activeQuote.warrantyInfo}</p>}
+                </div>
+              </div>
+
+              <table className="w-full text-xs border-collapse border border-slate-300 mb-6">
+                <thead>
+                  <tr className="bg-slate-100 border-b border-slate-300 font-bold text-slate-800">
+                    <th className="border-r border-slate-300 p-2 text-center w-12">CANT.</th>
+                    <th className="border-r border-slate-300 p-2 text-center w-16">UNIDAD</th>
+                    <th className="border-r border-slate-300 p-2 text-left">DESCRIPCIÓN DEL CONCEPTO</th>
+                    <th className="border-r border-slate-300 p-2 text-right w-24">PRECIO U.</th>
+                    <th className="p-2 text-right w-24">TOTAL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(activeQuote.items || []).map((item, idx) => (
+                    <tr key={idx} className="border-b border-slate-200">
+                      <td className="border-r border-slate-200 p-2 text-center font-medium">{item.quantity}</td>
+                      <td className="border-r border-slate-200 p-2 text-center text-slate-600">{item.unit}</td>
+                      <td className="border-r border-slate-200 p-2 text-slate-800">{item.description || '—'}</td>
+                      <td className="border-r border-slate-200 p-2 text-right">${Number(item.unitPrice || 0).toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                      <td className="p-2 text-right font-semibold">${((Number(item.quantity)||0) * (Number(item.unitPrice)||0)).toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="grid grid-cols-12 gap-4 items-start mb-8 text-xs">
+                <div className="col-span-7 space-y-2 text-slate-600">
+                  {company.clabe && (
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-slate-900 text-[11px] mb-1">💳 Datos para Pago de Anticipo (SPEI):</p>
+                        {company.bankHolder && <p className="text-slate-700 text-[11px]">Titular: {company.bankHolder}</p>}
+                        <p className="font-mono text-slate-900 font-bold text-xs">{company.bank ? `${company.bank} • ` : ''}CLABE: {company.clabe}</p>
+                      </div>
+                      
+                      {qrUrl && (
+                        <div className="text-center flex-shrink-0">
+                          <img src={qrUrl} alt="QR SPEI" className="w-16 h-16 rounded border border-slate-300" />
+                          <span className="text-[8px] text-slate-500 font-bold block mt-0.5">Escanea y Paga</span>
+                        </div>
+                      )}
+                      {company.clabe && !isOnline && (
+                        <p className="text-[9px] text-slate-500">El QR requiere conexión; la CLABE aparece a la izquierda.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="col-span-5">
+                  <table className="w-full text-xs border border-slate-300">
+                    <tbody>
+                      <tr className="border-b border-slate-200">
+                        <td className="p-1.5 font-bold bg-slate-50 border-r border-slate-200">Subtotal</td>
+                        <td className="p-1.5 text-right font-medium">${netSubtotal.toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                      </tr>
+                      {activeQuote.includeIVA && (
+                        <tr className="border-b border-slate-200">
+                          <td className="p-1.5 font-bold bg-slate-50 border-r border-slate-200">IVA (16%)</td>
+                          <td className="p-1.5 text-right font-medium">${ivaVal.toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                        </tr>
+                      )}
+                      <tr className="bg-slate-100 font-bold">
+                        <td className="p-1.5 border-r border-slate-300">TOTAL</td>
+                        <td className="p-1.5 text-right text-slate-900">${totalVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} MXN</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ==================== PESTAÑA 2: CLIENTES ==================== */}
+        {activeTab === 'clients' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-3">
+              <div>
+                <h1 className="text-base font-bold text-slate-100">Directorio de Clientes</h1>
+                <p className="text-xs text-slate-400">Administra tus clientes para cotizaciones en 1 clic.</p>
+              </div>
+              <button
+                onClick={() => setShowClientModal(true)}
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1 shadow-lg shadow-emerald-500/20"
+              >
+                <Plus className="w-4 h-4" /> Registrar Cliente
+              </button>
+            </div>
+
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+              <input 
+                type="text"
+                placeholder="Buscar cliente por nombre o contacto..."
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
+                className="w-full bg-slate-900/60 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-slate-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(clients || [])
+                .filter(c => 
+                  (c?.name || '').toLowerCase().includes((clientSearch || '').toLowerCase()) || 
+                  (c?.contact || '').toLowerCase().includes((clientSearch || '').toLowerCase())
+                )
+                .map(c => (
+                  <div key={c.id || Math.random()} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-start">
+                    <div className="space-y-1">
+                      <p className="font-bold text-sm text-slate-100">{c?.name || 'Sin nombre'}</p>
+                      {c?.contact && <p className="text-xs text-slate-300">At'n: {c.contact}</p>}
+                      {c?.phone && <p className="text-[11px] text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {c.phone}</p>}
+                      {c?.location && <p className="text-[11px] text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {c.location}</p>}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          handleSelectClient(c);
+                          setActiveTab('quotes');
+                          setViewMode('editor');
+                        }}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg font-semibold"
+                      >
+                        Cotizar
+                      </button>
+                      <button
+                        onClick={() => {
+                          const updated = (clients || []).filter(x => x.id !== c.id);
+                          setClients(updated);
+                          localStorage.setItem('cotiq_clients', JSON.stringify(updated));
+                        }}
+                        className="text-slate-500 hover:text-rose-400 p-1.5"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+
+            {/* Modal Crear Cliente */}
+            {showClientModal && (
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h3 className="font-bold text-sm text-slate-100">Registrar Nuevo Cliente</h3>
+                    <button onClick={() => setShowClientModal(false)} className="text-slate-400 hover:text-slate-200">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!newClient.name.trim()) return;
+                      const created = { id: Date.now(), ...newClient };
+                      const updated = [created, ...(clients || [])];
+                      setClients(updated);
+                      localStorage.setItem('cotiq_clients', JSON.stringify(updated));
+                      setNewClient({ name: '', contact: '', phone: '', email: '', rfc: '', location: '' });
+                      setShowClientModal(false);
+                      notify('Cliente guardado');
+                    }} 
+                    className="space-y-3 text-xs"
+                  >
+                    <div>
+                      <label className="text-slate-400 block mb-1">Nombre o Razón Social (*)</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="Ej. Juan Pérez / Obras & Mantenimiento"
+                        value={newClient.name}
+                        onChange={(e) => setNewClient({ ...newClient, name: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 block mb-1">Contacto Directo</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ej. Arq. Carlos Mendoza"
+                        value={newClient.contact}
+                        onChange={(e) => setNewClient({ ...newClient, contact: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 block mb-1">Teléfono WhatsApp</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ej. 4421234567"
+                        value={newClient.phone}
+                        onChange={(e) => setNewClient({ ...newClient, phone: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 block mb-1">Ubicación / Dirección de Trabajo</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ej. Av. Hidalgo 456, Col. Centro, Querétaro, Qro."
+                        value={newClient.location}
+                        onChange={(e) => setNewClient({ ...newClient, location: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button 
+                        type="button" 
+                        onClick={() => setShowClientModal(false)}
+                        className="w-1/2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded-xl"
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        type="submit" 
+                        className="w-1/2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl shadow-lg shadow-emerald-500/20"
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ==================== PESTAÑA 3: CATÁLOGO ==================== */}
+        {activeTab === 'catalog' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-3">
+              <div>
+                <h1 className="text-base font-bold text-slate-100">Catálogo de Conceptos y Precios</h1>
+                <p className="text-xs text-slate-400">Organiza tus servicios para cargarlos en 1 clic.</p>
+              </div>
+              <button
+                onClick={() => setShowCatalogModal(true)}
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1 shadow-lg shadow-emerald-500/20"
+              >
+                <Plus className="w-4 h-4" /> Agregar Concepto
+              </button>
+            </div>
+
+            <div className="relative w-full">
+              <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+              <input 
+                type="text"
+                placeholder="Buscar concepto o servicio directamente..."
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+                className="w-full bg-slate-900/60 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-slate-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(catalog || [])
+                .filter(cat => (cat?.concept || '').toLowerCase().includes((catalogSearch || '').toLowerCase()))
+                .map(cat => (
+                  <div key={cat.id || Math.random()} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-center hover:border-slate-700 transition-colors">
+                    <div className="space-y-1">
+                      <p className="font-bold text-xs text-slate-100">{cat?.concept || 'Sin descripción'}</p>
+                      <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px] font-mono inline-block">{cat?.unit || 'Servicio'}</span>
+                    </div>
+                    <div className="text-right flex items-center gap-2">
+                      <span className="font-bold text-sm text-emerald-400">${Number(cat?.price || 0).toLocaleString('es-MX')}</span>
+                      <button
+                        onClick={() => {
+                          handleSelectCatalogItem(cat);
+                          setActiveTab('quotes');
+                          setViewMode('editor');
+                        }}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg font-semibold"
+                      >
+                        + Usar
+                      </button>
+                      <button
+                        onClick={() => {
+                          const updated = (catalog || []).filter(x => x.id !== cat.id);
+                          setCatalog(updated);
+                          localStorage.setItem('cotiq_catalog', JSON.stringify(updated));
+                        }}
+                        className="text-slate-500 hover:text-rose-400 p-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+
+            {/* Modal Crear Concepto */}
+            {showCatalogModal && (
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h3 className="font-bold text-sm text-slate-100">Agregar Concepto al Catálogo</h3>
+                    <button onClick={() => setShowCatalogModal(false)} className="text-slate-400 hover:text-slate-200">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!newCatalogItem.concept.trim()) return;
+                      const created = { id: Date.now(), concept: newCatalogItem.concept, unit: newCatalogItem.unit, price: Number(newCatalogItem.price) || 0 };
+                      const updated = [created, ...(catalog || [])];
+                      setCatalog(updated);
+                      localStorage.setItem('cotiq_catalog', JSON.stringify(updated));
+                      setNewCatalogItem({ concept: '', unit: 'Servicio', price: '' });
+                      setShowCatalogModal(false);
+                      notify('Concepto guardado');
+                    }} 
+                    className="space-y-3 text-xs"
+                  >
+                    <div>
+                      <label className="text-slate-400 block mb-1">Descripción del Servicio / Material (*)</label>
+                      <input 
+                        type="text" 
+                        required
+                        placeholder="Ej. Suministro e instalación de Minisplit 1.5 Ton"
+                        value={newCatalogItem.concept}
+                        onChange={(e) => setNewCatalogItem({ ...newCatalogItem, concept: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Unidad de Medida</label>
+                      <select
+                        value={newCatalogItem.unit}
+                        onChange={(e) => setNewCatalogItem({ ...newCatalogItem, unit: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none"
+                      >
+                        <option value="Servicio">Servicio</option>
+                        <option value="Pieza">Pieza</option>
+                        <option value="m²">m²</option>
+                        <option value="m³">m³</option>
+                        <option value="ml">ml</option>
+                        <option value="Lote">Lote</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Precio Unitario ($ MXN)</label>
+                      <input 
+                        type="number" 
+                        required
+                        placeholder="Ej. 1500"
+                        value={newCatalogItem.price}
+                        onChange={(e) => setNewCatalogItem({ ...newCatalogItem, price: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button 
+                        type="button" 
+                        onClick={() => setShowCatalogModal(false)}
+                        className="w-1/2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded-xl"
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        type="submit" 
+                        className="w-1/2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl shadow-lg shadow-emerald-500/20"
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ==================== PESTAÑA: MI EMPRESA ==================== */}
+        {activeTab === 'settings' && (
+          <div className="space-y-4 max-w-2xl mx-auto bg-slate-900/60 border border-slate-800 p-6 rounded-3xl">
+            
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h1 className="text-base font-bold text-slate-100">Perfil de Tu Empresa (Emisor)</h1>
+              <button
+                type="button"
+                onClick={handleClearAllStorage}
+                className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs px-3 py-1.5 rounded-xl font-semibold flex items-center gap-1.5 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Restablecer Memoria
+              </button>
+            </div>
+
+            {/* Panel de Seguridad */}
+            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2">
+              <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" /> Estado del Cifrado y Seguridad COTIQ
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
+                <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800">
+                  <span className="text-slate-500 block text-[9px]">Cifrado en Tránsito</span>
+                  <span className="font-bold text-emerald-400">SSL / TLS 256-bit Activo</span>
+                </div>
+                <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800">
+                  <span className="text-slate-500 block text-[9px]">Seguridad de Datos</span>
+                  <span className="font-bold text-emerald-400">RLS Tenant Isolating Activo</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Carga de Logo */}
+            <div className="flex items-center gap-4 bg-slate-950 p-4 rounded-2xl border border-slate-800">
+              <div className="w-16 h-16 bg-slate-900 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden">
+                {company.logo ? (
+                  <img src={company.logo} alt="Logo" className="w-full h-full object-cover" />
+                ) : (
+                  <ImageIcon className="w-6 h-6 text-slate-600" />
+                )}
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-200 block">Logotipo de la Empresa</span>
+                <p className="text-[11px] text-slate-400 mb-2">Aparecerá en el membrete superior de tus cotizaciones A4.</p>
+                <label className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg font-semibold cursor-pointer inline-flex items-center gap-1.5">
+                  <Upload className="w-3.5 h-3.5" /> Subir Imagen
+                  <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                </label>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-400 block mb-1">Nombre Comercial / Tu Nombre</label>
+                <input 
+                  type="text"
+                  value={company.name}
+                  onChange={(e) => saveCompanyData({ ...company, name: e.target.value })}
+                  placeholder="Ej. Juan Pérez / Obras & Mantenimiento"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 block mb-1">Especialidad / Giro del Negocio</label>
+                  <input 
+                    type="text"
+                    value={company.tagline}
+                    onChange={(e) => saveCompanyData({ ...company, tagline: e.target.value })}
+                    placeholder="Ej. Instalaciones Eléctricas y Remodelaciones"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-400 block mb-1">RFC / ID Fiscal (Opcional)</label>
+                  <input 
+                    type="text"
+                    value={company.rfc}
+                    onChange={(e) => saveCompanyData({ ...company, rfc: e.target.value })}
+                    placeholder="Ej. PEJU900101XXX"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 block mb-1">Teléfono WhatsApp</label>
+                  <input 
+                    type="text"
+                    value={company.phone}
+                    onChange={(e) => saveCompanyData({ ...company, phone: e.target.value })}
+                    placeholder="Ej. 4421234567"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-400 block mb-1">Correo Electrónico Oficial</label>
+                  <input 
+                    type="text"
+                    value={company.email}
+                    onChange={(e) => saveCompanyData({ ...company, email: e.target.value })}
+                    placeholder="Ej. contacto@empresa.com"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1">Dirección Fiscal / Comercial</label>
+                <input 
+                  type="text"
+                  value={company.address}
+                  onChange={(e) => saveCompanyData({ ...company, address: e.target.value })}
+                  placeholder="Ej. Av. Hidalgo 456, Col. Centro, Querétaro, Qro."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                />
+              </div>
+
+              <div className="border-t border-slate-800 pt-3">
+                <span className="text-xs font-bold text-emerald-400 block mb-2">Datos para Cobro SPEI / Transferencia</span>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-slate-400 block mb-1">Banco</label>
+                    <input 
+                      type="text"
+                      value={company.bank}
+                      onChange={(e) => saveCompanyData({ ...company, bank: e.target.value })}
+                      placeholder="Ej. BBVA"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 block mb-1">Titular de Cuenta</label>
+                    <input 
+                      type="text"
+                      value={company.bankHolder}
+                      onChange={(e) => saveCompanyData({ ...company, bankHolder: e.target.value })}
+                      placeholder="Ej. Juan Pérez"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 block mb-1">CLABE Interbancaria</label>
+                    <input 
+                      type="text"
+                      value={company.clabe}
+                      onChange={(e) => saveCompanyData({ ...company, clabe: e.target.value })}
+                      placeholder="012180000000000000"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-800 pt-3">
+                <label className="text-slate-400 block mb-1">Condiciones Comerciales y Garantía por Defecto</label>
+                <textarea 
+                  rows={2}
+                  value={company.defaultTerms}
+                  onChange={(e) => saveCompanyData({ ...company, defaultTerms: e.target.value })}
+                  placeholder="Ej. Se requiere 50% de anticipo al autorizar el presupuesto y 50% restante contra entrega de obra."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-slate-500"
+                />
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ==================== PESTAÑA: LICENCIA ==================== */}
+        {activeTab === 'plans' && (
+          <div className="space-y-6">
+            <div className="text-center max-w-xl mx-auto space-y-2">
+              <h1 className="text-xl font-black text-slate-100">Sistema de Licencias COTIQ</h1>
+              <p className="text-xs text-slate-400">Pagas una sola vez. Sin rentas ni suscripciones mensuales que te agobien.</p>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 max-w-xl mx-auto space-y-3 shadow-2xl">
+              <p className="text-[10px] text-slate-400">
+                Las licencias y los créditos se activan automáticamente en tu cuenta cuando Mercado Pago confirma el pago. El acceso se verifica desde el servidor.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
+              
+              {/* Paquete por Créditos */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 space-y-4 relative flex flex-col justify-between hover:border-slate-700 transition-colors">
+                <div className="space-y-3">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">USO OCASIONAL</span>
+                  <h3 className="text-lg font-bold text-slate-100">Paquete de Créditos</h3>
+                  <div className="text-2xl font-black text-slate-100">$149 <span className="text-xs font-normal text-slate-400">MXN / Pago Único</span></div>
+                  <ul className="text-xs text-slate-300 space-y-2 pt-2 border-t border-slate-800">
+                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-400" /> 50 Cotizaciones completas</li>
+                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-400" /> Sin fecha de vencimiento</li>
+                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-400" /> Exportación en PDF A4 y WhatsApp</li>
+                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-400" /> Directorio de Clientes</li>
+                  </ul>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedPlanToBuy({ type: 'creditos', price: 149, title: 'Paquete de 50 Créditos COTIQ' });
+                    setLegalAccepted(false);
+                    setShowCheckoutModal(true);
+                  }}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-2"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-400" /> Activar Paquete 50 Docs
+                </button>
+              </div>
+
+              {/* Licencia Vitalicia PRO */}
+              <div className="bg-gradient-to-b from-emerald-950/60 to-slate-900 border-2 border-emerald-500 rounded-3xl p-6 space-y-4 relative flex flex-col justify-between shadow-2xl shadow-emerald-500/10">
+                <span className="absolute -top-3 right-6 bg-emerald-500 text-slate-950 text-[10px] font-black px-3 py-0.5 rounded-full uppercase">
+                  MÁS POPULAR
+                </span>
+                <div className="space-y-3">
+                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">ACCESO DE POR VIDA</span>
+                  <h3 className="text-lg font-bold text-slate-100">Licencia Vitalicia COTIQ PRO</h3>
+                  <div className="text-2xl font-black text-emerald-400">$699 <span className="text-xs font-normal text-slate-400">MXN / Pago Único</span></div>
+                  <ul className="text-xs text-slate-200 space-y-2 pt-2 border-t border-emerald-500/20">
+                    <li className="flex items-center gap-2 font-semibold"><Check className="w-4 h-4 text-emerald-400" /> Cotizaciones e Historial ILIMITADO</li>
+                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-400" /> Encriptación SSL 256-bit</li>
+                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-400" /> Link Web Interactivo para el Cliente</li>
+                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-400" /> Calculadora Privada de Utilidad</li>
+                    <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-400" /> Anexo Fotográfico y QR SPEI</li>
+                  </ul>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedPlanToBuy({ type: 'vitalicia', price: 699, title: 'Licencia Vitalicia COTIQ PRO' });
+                    setLegalAccepted(false);
+                    setShowCheckoutModal(true);
+                  }}
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2"
+                >
+                  <Award className="w-4 h-4" /> Adquirir Licencia Vitalicia
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* MODAL CHECKOUT DE PAGO */}
+        {showCheckoutModal && selectedPlanToBuy && (
+          <div className="fixed inset-0 overflow-y-auto bg-slate-950/80 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-4">
+            <div className="my-auto max-h-[calc(100dvh-2rem)] overflow-y-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-emerald-400" /> Adquirir {selectedPlanToBuy.title}
+                </h3>
+                <button onClick={() => { setShowCheckoutModal(false); setLegalAccepted(false); }} className="text-slate-400 hover:text-slate-200">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs">
+                <div className="flex justify-between items-center text-slate-300">
+                  <span>Concepto:</span>
+                  <span className="font-bold text-slate-100">{selectedPlanToBuy.title}</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-300">
+                  <span>Monto Total:</span>
+                  <span className="text-base font-black text-emerald-400">${selectedPlanToBuy.price} MXN (Pago Único)</span>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-700 bg-slate-950 p-3 leading-5 text-slate-200">
+                  <input
+                    id="checkout-legal-acceptance"
+                    type="checkbox"
+                    checked={legalAccepted}
+                    onChange={(event) => setLegalAccepted(event.target.checked)}
+                    className="mt-1 h-5 w-5 shrink-0 cursor-pointer accent-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+                  />
+                  <span>
+                    Confirmo que tengo 18 años o más y acepto los <a className="text-emerald-300 underline underline-offset-2" href="/legal#terminos" target="_blank" rel="noreferrer">Términos</a>. He leído el <a className="text-emerald-300 underline underline-offset-2" href="/legal#privacidad" target="_blank" rel="noreferrer">Aviso de privacidad</a>.
+                  </span>
+                </label>
+                {!legalAccepted && (
+                  <p className="text-[11px] text-emerald-200/90">
+                    Marca la casilla para habilitar la compra.
+                  </p>
+                )}
+                {!account ? (
+                  isCheckingSession ? (
+                    <p className="text-slate-400 py-3">Comprobando tu sesión...</p>
+                  ) : (
+                    <form onSubmit={handleAuthSubmit} className="space-y-3">
+                      <p className="text-slate-400 text-[11px]">
+                        {authMode === 'register'
+                          ? 'Crea una cuenta para asociar tu compra.'
+                          : 'Inicia sesión para asociar tu compra a tu cuenta.'}
+                      </p>
+                      <label className="block text-slate-300">
+                        Correo electrónico
+                        <input
+                          type="email"
+                          autoComplete="email"
+                          required
+                          value={authEmail}
+                          onChange={(event) => setAuthEmail(event.target.value)}
+                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-emerald-500"
+                        />
+                      </label>
+                      <label className="block text-slate-300">
+                        Contraseña
+                        <input
+                          type="password"
+                          autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+                          minLength={authMode === 'register' ? 12 : undefined}
+                          required
+                          value={authPassword}
+                          onChange={(event) => setAuthPassword(event.target.value)}
+                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-emerald-500"
+                        />
+                      </label>
+                      {authError && <p role="alert" className="text-rose-400">{authError}</p>}
+                      <button
+                        type="submit"
+                        disabled={isAuthenticating || (authMode === 'register' && !legalAccepted)}
+                        className="w-full rounded-xl bg-emerald-500 py-3 text-xs font-extrabold text-slate-950 transition-colors hover:bg-emerald-400 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {isAuthenticating
+                          ? 'Validando cuenta...'
+                          : authMode === 'register'
+                            ? 'Crear cuenta'
+                            : 'Iniciar sesión'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode(authMode === 'register' ? 'login' : 'register');
+                          setAuthError('');
+                        }}
+                        className="w-full py-2 text-slate-400 transition-colors hover:text-slate-200"
+                      >
+                        {authMode === 'register'
+                          ? '¿Ya tienes cuenta? Inicia sesión'
+                          : '¿Aún no tienes cuenta? Crear cuenta'}
+                      </button>
+                    </form>
+                  )
+                ) : (
+                  <>
+                    <p className="text-slate-400 text-[11px]">
+                      Pagar como <span className="text-slate-200">{account.email}</span>
+                    </p>
+                    <button
+                      onClick={handleMercadoPagoPayment}
+                      disabled={isCheckingOut || !legalAccepted}
+                      className="w-full p-3 bg-slate-950 border border-slate-800 hover:border-emerald-500 rounded-xl text-slate-200 font-medium text-left flex flex-col gap-1 transition-all disabled:cursor-wait disabled:opacity-60"
+                    >
+                      <CreditCard className="w-4 h-4 text-emerald-400" />
+                      <span className="font-bold text-xs">Tarjeta / SPEI</span>
+                      <span className="text-[9px] text-slate-500">
+                        {isCheckingOut ? 'Conectando con Mercado Pago...' : 'Checkout Mercado Pago'}
+                      </span>
+                    </button>
+                  </>
+                )}
+                {checkoutError && <p role="alert" className="text-rose-400">{checkoutError}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Firma Digital */}
+        {showSignatureModal && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="font-bold text-sm text-slate-100">Firma en Pantalla ({signatureTarget === 'client' ? 'Cliente' : 'Emisor'})</h3>
+                <button onClick={() => setShowSignatureModal(false)} className="text-slate-400 hover:text-slate-200">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="bg-white rounded-2xl p-2 border-2 border-slate-700 touch-none">
+                <canvas 
+                  ref={canvasRef}
+                  width={340}
+                  height={160}
+                  onMouseDown={startDrawing}
+                  onMouseMove={draw}
+                  onMouseUp={stopDrawing}
+                  onMouseLeave={stopDrawing}
+                  onTouchStart={startDrawing}
+                  onTouchMove={draw}
+                  onTouchEnd={stopDrawing}
+                  className="w-full h-40 cursor-crosshair bg-white"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button 
+                  onClick={clearCanvas}
+                  className="w-1/2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2 rounded-xl text-xs"
+                >
+                  Limpiar
+                </button>
+                <button 
+                  onClick={saveSignature}
+                  className="w-1/2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2 rounded-xl text-xs shadow-lg shadow-emerald-500/20"
+                >
+                  Guardar Firma
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </main>
+      <footer className="print:hidden mx-auto flex max-w-5xl flex-wrap justify-center gap-x-5 gap-y-2 border-t border-slate-800 px-4 py-6 text-xs text-slate-400">
+        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#terminos">Términos</a>
+        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#privacidad">Privacidad</a>
+        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#cookies">Cookies y almacenamiento</a>
+        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#compras">Compras y reembolsos</a>
+        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="mailto:cotiq.soporte@gmail.com">Contacto</a>
+      </footer>
+    </div>
+  );
+}
