@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "dev:web": "vite",
-    "dev:api": "node --watch server/index.js",
-    "start": "node server/index.js",
+    "dev:api": "node --watch server/start.js",
+    "start": "node server/start.js",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
@@ -25,7 +25,8 @@
     "mercadopago": "^3.6.1",
     "pg": "^8.16.3",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "serverless-http": "^4.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
