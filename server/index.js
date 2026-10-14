@@ -27,8 +27,6 @@ const webhookSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
 const sessionCookie = 'pf.sid';
 const PgSessionStore = connectPgSimple(session);
 
-export { app };
-
 function validateEnvironment() {
   if (!appOrigin) throw new Error('Falta APP_ORIGIN.');
   const parsedOrigin = new URL(appOrigin);
@@ -437,7 +435,14 @@ app.use('/api', (error, req, res, next) => {
   res.status(status).json(responseBody);
 });
 
-export async function initializeServer() {
+async function start() {
   validateEnvironment();
   await initializeDatabase();
+  const port = Number(process.env.PORT || 3001);
+  app.listen(port, () => console.log(`Cotiq API escuchando en el puerto ${port}.`));
 }
+
+start().catch((error) => {
+  console.error('No se pudo iniciar Cotiq API:', error);
+  process.exitCode = 1;
+});

@@ -47,10 +47,9 @@ Documentación oficial: [Checkout Pro](https://www.mercadopago.com.mx/developers
 
 ## Despliegue
 
-- El proyecto está configurado para Netlify: conecta el repositorio de GitHub y publica la rama `main`. Netlify compila la SPA, dirige `/api/*` a una Function que adapta Express y devuelve `index.html` para rutas de la SPA como `/legal`.
-- La API necesita PostgreSQL administrado. En la configuración del sitio Netlify define `DATABASE_URL`, `DATABASE_SSL`, `APP_ORIGIN` (el dominio HTTPS del sitio), `SESSION_SECRET` (al menos 32 bytes aleatorios), `MERCADOPAGO_ACCESS_TOKEN` y `MERCADOPAGO_WEBHOOK_SECRET`. No uses tokens de prueba en producción.
-- Configura en Mercado Pago el webhook `https://TU-DOMINIO/api/payments/webhook` y activa el evento **Payments**. Si configuras `WEBHOOK_URL`, debe ser esa misma URL HTTPS; si la dejas vacía, Cotiq la deriva de `APP_ORIGIN`.
-- `DATABASE_URL` y las credenciales de Mercado Pago son secretos. La base debe permitir conexiones TLS si el proveedor lo requiere (`DATABASE_SSL=true`). Netlify incluye el esquema SQL para inicializar las tablas y almacena las sesiones en PostgreSQL.
+- Publica la SPA y Express bajo el mismo origen HTTPS. Configura el proxy/reverse proxy para servir `/api/*` desde Express y el resto desde Vite/los archivos estáticos.
+- Configura el hosting de la SPA para devolver `index.html` en `/legal` y sus recargas; esa ruta muestra los documentos legales.
+- Usa PostgreSQL administrado con copias de seguridad. Configura `DATABASE_URL`, `APP_ORIGIN` HTTPS, `SESSION_SECRET`, `MERCADOPAGO_ACCESS_TOKEN` y `MERCADOPAGO_WEBHOOK_SECRET` como secretos del proveedor; activa TLS de PostgreSQL si el proveedor lo requiere (`DATABASE_SSL=true`).
 - En producción usa el Access token de producción y el secreto del webhook del entorno de producción. No subas `.env`.
 - El webhook debe poder volver a consultar la API de Mercado Pago. Solo pagos aprobados otorgan acceso; los reembolsos y contracargos revocan la compra correspondiente. Las notificaciones repetidas recalculan beneficios de forma idempotente.
 

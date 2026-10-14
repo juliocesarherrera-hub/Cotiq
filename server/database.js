@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import pg from 'pg';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const { Pool } = pg;
 
@@ -12,7 +12,7 @@ export const pool = new Pool({
 
 export async function initializeDatabase() {
   if (!process.env.DATABASE_URL) throw new Error('Falta DATABASE_URL.');
-  const schemaPath = resolve(process.cwd(), 'db/schema.sql');
+  const schemaPath = fileURLToPath(new URL('../db/schema.sql', import.meta.url));
   await pool.query(await readFile(schemaPath, 'utf8'));
 }
 
