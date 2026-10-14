@@ -46,3 +46,11 @@ CREATE TABLE IF NOT EXISTS credit_consumptions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, quote_id)
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+  sid VARCHAR PRIMARY KEY,
+  sess JSON NOT NULL,
+  expire TIMESTAMP(6) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_expire ON sessions (expire);

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { attachDatabasePool } from '@vercel/functions';
 import pg from 'pg';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -10,10 +11,16 @@ export const pool = new Pool({
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: true } : undefined
 });
 
+attachDatabasePool(pool);
+
 export async function initializeDatabase() {
   if (!process.env.DATABASE_URL) throw new Error('Falta DATABASE_URL.');
   const schemaPath = fileURLToPath(new URL('../db/schema.sql', import.meta.url));
-  await pool.query(await readFile(schemaPath, 'utf8'));
+  const schema = await readFile(schemaPath, 'utf8');
+  await inTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('cotiq:schema:v1'))");
+    await client.query(schema);
+  });
 }
 
 export async function inTransaction(callback) {

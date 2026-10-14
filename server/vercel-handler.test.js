@@ -12,6 +12,10 @@ process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/cotiq';
 
 const { pool } = await import('./database.js');
 pool.query = async () => ({ rows: [] });
+pool.connect = async () => ({
+  query: async () => ({ rows: [] }),
+  release() {}
+});
 const { default: handler } = await import('../api/[...path].js');
 
 test('Vercel API handler initializes and dispatches Express routes', async (t) => {

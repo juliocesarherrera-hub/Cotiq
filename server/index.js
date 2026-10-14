@@ -193,7 +193,7 @@ app.post('/api/payments/webhook', async (req, res, next) => {
 app.use('/api', requireSameOrigin);
 app.use(session({
   name: sessionCookie,
-  store: new PgSessionStore({ pool, tableName: 'sessions', createTableIfMissing: true }),
+  store: new PgSessionStore({ pool, tableName: 'sessions', createTableIfMissing: false }),
   secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
