@@ -26,6 +26,9 @@ const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const webhookSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
 const sessionCookie = 'pf.sid';
 const PgSessionStore = connectPgSimple(session);
+let initialization;
+
+export { app };
 
 function validateEnvironment() {
   if (!appOrigin) throw new Error('Falta APP_ORIGIN.');
@@ -49,6 +52,19 @@ function validateEnvironment() {
     throw new Error('MERCADOPAGO_WEBHOOK_SECRET debe ser el secreto de firma de webhooks, no el Access Token.');
   }
   if (!process.env.DATABASE_URL) throw new Error('Falta DATABASE_URL.');
+}
+
+export function initializeServer() {
+  if (!initialization) {
+    initialization = (async () => {
+      validateEnvironment();
+      await initializeDatabase();
+    })().catch((error) => {
+      initialization = undefined;
+      throw error;
+    });
+  }
+  return initialization;
 }
 
 function accountSnapshot(user) {
@@ -424,7 +440,7 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
   }
 });
 
-app.use('/api', (error, req, res, next) => {
+app.use((error, req, res, next) => {
   console.error('API request failed:', error);
   if (res.headersSent) return next(error);
   const status = Number.isInteger(error.status) ? error.status : 500;
@@ -435,14 +451,4 @@ app.use('/api', (error, req, res, next) => {
   res.status(status).json(responseBody);
 });
 
-async function start() {
-  validateEnvironment();
-  await initializeDatabase();
-  const port = Number(process.env.PORT || 3001);
-  app.listen(port, () => console.log(`Cotiq API escuchando en el puerto ${port}.`));
-}
-
-start().catch((error) => {
-  console.error('No se pudo iniciar Cotiq API:', error);
-  process.exitCode = 1;
-});
+export default app;

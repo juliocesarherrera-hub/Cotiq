@@ -47,10 +47,10 @@ Documentación oficial: [Checkout Pro](https://www.mercadopago.com.mx/developers
 
 ## Despliegue
 
-- Publica la SPA y Express bajo el mismo origen HTTPS. Configura el proxy/reverse proxy para servir `/api/*` desde Express y el resto desde Vite/los archivos estáticos.
-- Configura el hosting de la SPA para devolver `index.html` en `/legal` y sus recargas; esa ruta muestra los documentos legales.
-- Usa PostgreSQL administrado con copias de seguridad. Configura `DATABASE_URL`, `APP_ORIGIN` HTTPS, `SESSION_SECRET`, `MERCADOPAGO_ACCESS_TOKEN` y `MERCADOPAGO_WEBHOOK_SECRET` como secretos del proveedor; activa TLS de PostgreSQL si el proveedor lo requiere (`DATABASE_SSL=true`).
-- En producción usa el Access token de producción y el secreto del webhook del entorno de producción. No subas `.env`.
+- El repositorio está configurado para Vercel. Importa `juliocesarherrera-hub/Cotiq`, deja **Root Directory** como `./`, el preset **Vite**, el comando `npm run build` y el directorio de salida `dist`. `vercel.json` configura las rutas de la SPA y `api/[...path].js` ejecuta la API Express.
+- Crea una base PostgreSQL administrada con TLS, por ejemplo en Neon o Supabase, y configura como variables de entorno de Vercel `DATABASE_URL` (preferentemente el endpoint pooler), `DATABASE_SSL=true`, `SESSION_SECRET` (al menos 32 bytes aleatorios), `MERCADOPAGO_ACCESS_TOKEN` y `MERCADOPAGO_WEBHOOK_SECRET`. Añade también `NODEJS_HELPERS=0` para que Express procese las solicitudes JSON con sus límites de tamaño habituales.
+- Después del primer despliegue, configura `APP_ORIGIN` con el origen HTTPS asignado a Vercel, por ejemplo `https://cotiq.vercel.app` (sin rutas ni barra final), y vuelve a desplegar. Puedes dejar `WEBHOOK_URL` vacía para que Cotiq derive la URL de notificaciones, o configurarla como `https://TU-DOMINIO/api/payments/webhook`.
+- En Mercado Pago registra `https://TU-DOMINIO/api/payments/webhook` y activa el evento **Payments**. Usa el Access token y el secreto de firma de webhook de producción; son valores diferentes. No pegues secretos en el frontend, no los prefijes con `VITE_` y no subas `.env`.
 - El webhook debe poder volver a consultar la API de Mercado Pago. Solo pagos aprobados otorgan acceso; los reembolsos y contracargos revocan la compra correspondiente. Las notificaciones repetidas recalculan beneficios de forma idempotente.
 
 ## Estado y límites actuales

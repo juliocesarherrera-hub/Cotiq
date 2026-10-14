@@ -6,12 +6,12 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "dev:web": "vite",
-    "dev:api": "node --watch server/index.js",
-    "start": "node server/index.js",
+    "dev:api": "node --watch server/start.js",
+    "start": "node server/start.js",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --test server/payment-security.test.js"
+    "test": "node --test server/payment-security.test.js server/vercel-handler.test.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
