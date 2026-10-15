@@ -1,3 +1,356 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.cotiq-light {
+  color-scheme: light;
+  color: #1b2b22;
+  background: #f3f6f4;
+}
+
+.cotiq-light .bg-slate-950 {
+  background-color: #f3f6f4;
+}
+
+.cotiq-light [class~="bg-slate-950/80"] {
+  background-color: rgb(17 33 24 / 68%);
+}
+
+.cotiq-light .bg-slate-900,
+.cotiq-light [class~="bg-slate-900/80"],
+.cotiq-light [class~="bg-slate-900/60"],
+.cotiq-light [class~="bg-slate-900/50"],
+.cotiq-light [class~="bg-slate-900/40"],
+.cotiq-light [class~="bg-slate-900/30"] {
+  background-color: #ffffff;
+}
+
+.cotiq-light .bg-slate-800,
+.cotiq-light [class~="bg-slate-800/80"],
+.cotiq-light [class~="bg-slate-800/60"],
+.cotiq-light [class~="bg-slate-800/50"],
+.cotiq-light [class~="bg-slate-800/40"] {
+  background-color: #edf2ee;
+}
+
+.cotiq-light .bg-slate-700,
+.cotiq-light [class~="bg-slate-700/50"] {
+  background-color: #e2eae4;
+}
+
+.cotiq-light [class~="bg-emerald-950/40"],
+.cotiq-light [class~="bg-emerald-950/30"],
+.cotiq-light [class~="from-emerald-950/40"],
+.cotiq-light [class~="from-emerald-950/60"] {
+  background-color: #edf6f0;
+}
+
+.cotiq-light [class*="bg-gradient-to-"] {
+  background-image: none;
+}
+
+.cotiq-light .text-slate-100 {
+  color: #1b2b22;
+}
+
+.cotiq-light .text-slate-200 {
+  color: #304238;
+}
+
+.cotiq-light .text-slate-300 {
+  color: #405349;
+}
+
+.cotiq-light .text-slate-400 {
+  color: #58685e;
+}
+
+.cotiq-light .text-slate-500 {
+  color: #64736a;
+}
+
+.cotiq-light .text-slate-600 {
+  color: #718078;
+}
+
+.cotiq-light .text-emerald-200,
+.cotiq-light .text-emerald-300,
+.cotiq-light .text-emerald-400 {
+  color: #087348;
+}
+
+.cotiq-light .text-amber-200,
+.cotiq-light .text-amber-300 {
+  color: #765000;
+}
+
+.cotiq-light .text-rose-300,
+.cotiq-light .text-rose-400,
+.cotiq-light .text-red-300,
+.cotiq-light .text-red-400 {
+  color: #a42b3a;
+}
+
+.cotiq-light .border-slate-900 {
+  border-color: #e7ece8;
+}
+
+.cotiq-light .border-slate-800,
+.cotiq-light [class~="border-slate-800/80"],
+.cotiq-light [class~="border-slate-800/60"] {
+  border-color: #dce5de;
+}
+
+.cotiq-light .border-slate-700,
+.cotiq-light [class~="border-slate-700/80"] {
+  border-color: #cbd8ce;
+}
+
+.cotiq-light .border-emerald-500,
+.cotiq-light [class~="border-emerald-500/30"],
+.cotiq-light [class~="border-emerald-500/20"] {
+  border-color: #b9d8c4;
+}
+
+.cotiq-light .border-amber-800,
+.cotiq-light .border-amber-500,
+.cotiq-light [class~="border-amber-500/30"],
+.cotiq-light [class~="border-amber-500/20"] {
+  border-color: #e4d2a6;
+}
+
+.cotiq-light .bg-amber-950,
+.cotiq-light [class~="bg-amber-950/50"] {
+  background-color: #fff7e5;
+}
+
+.cotiq-light [class~="bg-amber-500/10"] {
+  background-color: #fff2d5;
+}
+
+.cotiq-light .bg-rose-950,
+.cotiq-light [class~="bg-rose-950/50"] {
+  background-color: #fff0f1;
+}
+
+.cotiq-light .border-rose-900 {
+  border-color: #f1c5ca;
+}
+
+.cotiq-light .placeholder\:text-slate-500::placeholder,
+.cotiq-light .placeholder\:text-slate-600::placeholder {
+  color: #64736a;
+  opacity: 1;
+}
+
+.cotiq-light :where(input, textarea, select) {
+  color: #1b2b22;
+}
+
+.cotiq-light :where(input, textarea, select):focus-visible,
+.cotiq-light :where(button, a):focus-visible {
+  outline-color: #087348;
+}
+
+.cotiq-light ::selection {
+  background: #cde6d4;
+  color: #17251d;
+}
+
+.cotiq-header {
+  background: #173c2b;
+  border-bottom: 1px solid #28513d;
+  box-shadow: 0 4px 18px rgb(20 45 31 / 9%);
+}
+
+.cotiq-header .text-slate-100 {
+  color: #f6fbf7;
+}
+
+.cotiq-header .text-slate-400 {
+  color: #c4d7ca;
+}
+
+.cotiq-light .cotiq-header .cotiq-credit-badge,
+.cotiq-light .cotiq-header .cotiq-credit-badge .text-emerald-400 {
+  color: #d8ecde;
+}
+
+.cotiq-light .cotiq-header .cotiq-license-link .text-emerald-400 {
+  color: #b8e0c5;
+}
+
+.cotiq-brand-mark {
+  background-color: #d8ecde;
+  color: #173c2b;
+}
+
+.cotiq-credit-badge {
+  background: rgb(255 255 255 / 9%);
+  border-color: rgb(255 255 255 / 19%);
+  color: #d8ecde;
+}
+
+.cotiq-credit-badge svg {
+  color: #b8e0c5;
+}
+
+.cotiq-nav {
+  background: rgb(9 29 18 / 25%);
+  border: 1px solid rgb(255 255 255 / 13%);
+}
+
+.cotiq-nav-item {
+  color: #d0dfd5;
+}
+
+.cotiq-nav-item:hover {
+  background: rgb(255 255 255 / 8%);
+  color: #ffffff;
+}
+
+.cotiq-nav-item.is-active {
+  background: #f7faf8;
+  color: #173c2b;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 14%);
+}
+
+.cotiq-nav .cotiq-license-link.is-active {
+  background: #d8ecde;
+  color: #173c2b;
+}
+
+.cotiq-light .cotiq-stats {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #dce5de;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.cotiq-light .cotiq-stat {
+  min-height: 94px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 18px 20px;
+}
+
+.cotiq-light .cotiq-stat + .cotiq-stat {
+  border-left: 1px solid #e6ece7;
+}
+
+.cotiq-light .cotiq-stat-action {
+  gap: 14px;
+}
+
+.cotiq-light .cotiq-filter-row {
+  border-color: #dce5de;
+}
+
+.cotiq-light .cotiq-filter {
+  color: #58685e;
+}
+
+.cotiq-light .cotiq-filter:hover {
+  background: #e8efea;
+  color: #1b2b22;
+}
+
+.cotiq-light .cotiq-filter.is-active {
+  background: #dfece3;
+  color: #175638;
+}
+
+.cotiq-light main h1 {
+  font-size: 1.75rem;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.cotiq-empty-state {
+  min-height: 320px;
+  border: 1px solid #dce5de;
+  background: #ffffff;
+}
+
+.cotiq-empty-main {
+  background:
+    radial-gradient(ellipse at 0% 100%, rgb(223 239 227 / 65%), transparent 54%),
+    #ffffff;
+}
+
+.cotiq-empty-icon {
+  width: 52px;
+  height: 52px;
+  background: #e8f3eb;
+  color: #1a6840;
+}
+
+.cotiq-empty-guide {
+  background: #f6f9f7;
+  border-left: 1px solid #e3ebe5;
+}
+
+.cotiq-step-number {
+  display: flex;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c7dbcd;
+  border-radius: 8px;
+  background: #eaf3ed;
+  color: #175638;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cotiq-light :where(input, textarea, select).bg-slate-950 {
+  background-color: #ffffff;
+}
+
+.cotiq-light :where(button, a) {
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 639px) {
+  .cotiq-header {
+    padding: 12px;
+  }
+
+  .cotiq-nav {
+    scrollbar-width: thin;
+    scrollbar-color: #87a793 transparent;
+  }
+
+  .cotiq-light .cotiq-stat {
+    min-height: 76px;
+    padding: 14px 16px;
+  }
+
+  .cotiq-light main h1 {
+    font-size: 1.5rem;
+  }
+
+  .cotiq-light .cotiq-stat + .cotiq-stat {
+    border-top: 1px solid #e6ece7;
+    border-left: 0;
+  }
+
+  .cotiq-empty-state {
+    min-height: 0;
+  }
+
+  .cotiq-empty-main,
+  .cotiq-empty-guide {
+    padding: 24px;
+  }
+
+  .cotiq-empty-guide {
+    border-top: 1px solid #e3ebe5;
+    border-left: 0;
+  }
+}

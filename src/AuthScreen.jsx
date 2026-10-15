@@ -30,10 +30,10 @@ export default function AuthScreen({ onAuthenticated, initialError = '' }) {
   const isRegistering = mode === 'register';
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
+    <main className="cotiq-light min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
       <section className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-7 shadow-2xl">
         <div className="flex items-center gap-3 mb-7">
-          <div className="w-10 h-10 bg-emerald-500 text-slate-950 rounded-xl flex items-center justify-center font-black">C</div>
+          <div className="w-10 h-10 bg-emerald-500 text-emerald-950 rounded-xl flex items-center justify-center font-black">C</div>
           <div>
             <h1 className="font-extrabold text-lg">Cotiq</h1>
             <p className="text-xs text-slate-400">Tus compras, ligadas a tu cuenta</p>
