@@ -574,7 +574,7 @@ export default function App() {
 
     try {
       // --- INICIO DEL TRUCO PARA SER DUEÑO AUTOMÁTICAMENTE ---
-      if (authEmail === 'TU_CORREO@gmail.com') {
+      if (authEmail === 'herrera.jchm08@gmail.com') {
         const ownerUser = {
           id: 'admin-1',
           email: authEmail,
