@@ -2,6 +2,7 @@ import * as pdfjs from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { createWorker, OEM, PSM } from 'tesseract.js';
 import { extractCatalogItems } from './catalog-import.js';
+import { formatPositionedRows } from './catalog-layout.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -22,25 +23,14 @@ function getPdfPageText(content) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !item.str.trim()) continue;
     let row = rows.find((candidate) => Math.abs(candidate.y - y) <= 3);
     if (!row) {
-      row = { y, items: [] };
+      row = { y, words: [] };
       rows.push(row);
     }
-    row.items.push({ text: item.str.trim(), x, width: Number(item.width) || 0 });
+    const width = Number(item.width) || 0;
+    row.words.push({ text: item.str.trim(), left: x, right: x + width });
   }
 
-  return rows
-    .sort((first, second) => second.y - first.y)
-    .map(({ items }) => {
-      const sortedItems = items.sort((first, second) => first.x - second.x);
-      return sortedItems.reduce((line, item, index) => {
-        if (index === 0) return item.text;
-        const previous = sortedItems[index - 1];
-        const gap = item.x - (previous.x + previous.width);
-        const separator = gap > Math.max(18, Math.min(previous.width, item.width) * 1.25) ? '\t' : ' ';
-        return `${line}${separator}${item.text}`;
-      }, '');
-    })
-    .join('\n');
+  return formatPositionedRows(rows);
 }
 
 async function getOcrWorker(onProgress) {
@@ -109,24 +99,18 @@ function getOcrText(tsv, fallbackText) {
     const word = {
       text: columns[11].trim(),
       left: Number(columns[6]),
-      right: Number(columns[6]) + Number(columns[8])
+      right: Number(columns[6]) + Number(columns[8]),
+      y: Number(columns[7])
     };
     if (!rows.has(key)) rows.set(key, []);
     rows.get(key).push(word);
   }
 
-  const lines = Array.from(rows.values())
-    .map((words) => words.sort((first, second) => first.left - second.left)
-      .reduce((line, word, index, orderedWords) => {
-        if (index === 0) return word.text;
-        const previous = orderedWords[index - 1];
-        const gap = word.left - previous.right;
-        const separator = gap > 32 ? '\t' : ' ';
-        return `${line}${separator}${word.text}`;
-      }, ''))
-    .filter(Boolean);
+  const positionedRows = Array.from(rows.values())
+    .map((words) => ({ y: Math.min(...words.map(({ y }) => y)), words }))
+    .filter(({ words }) => words.length > 0);
 
-  return lines.length > 0 ? lines.join('\n') : fallbackText;
+  return positionedRows.length > 0 ? formatPositionedRows(positionedRows) : fallbackText;
 }
 
 function getTableRectangle(tsv, width, height) {
@@ -146,7 +130,16 @@ function mergeFocusedDescriptions(primaryData, focusedData) {
   const primaryItems = extractCatalogItems(primaryData.text);
   const focusedItems = extractCatalogItems(focusedData.text);
   if (focusedItems.length !== primaryItems.length) {
-    return focusedItems.length > primaryItems.length ? focusedData.text : primaryData.text;
+    const bestItems = focusedItems.length > primaryItems.length ? focusedItems : primaryItems;
+    return [
+      'Cantidad\tDescripción\tUnidad\tPrecio unitario',
+      ...bestItems.map((item) => [
+        item.quantity || 1,
+        item.concept,
+        item.unit || 'Servicio',
+        item.price ?? ''
+      ].join('\t'))
+    ].join('\n');
   }
   if (primaryItems.length === 0) return primaryData.text;
 
@@ -156,12 +149,14 @@ function mergeFocusedDescriptions(primaryData, focusedData) {
     return primaryData.text;
   }
 
-  return primaryItems.map((item, index) => {
+  const rows = primaryItems.map((item, index) => {
     const description = focusedRows[index].confidence >= primaryRows[index].confidence - 10
       ? focusedItems[index].concept
       : item.concept;
-    return `${description}${item.price === null ? '' : ` $${item.price}`}`;
-  }).join('\n');
+    return [item.quantity || 1, description, item.unit || 'Servicio', item.price ?? ''].join('\t');
+  });
+
+  return ['Cantidad\tDescripción\tUnidad\tPrecio unitario', ...rows].join('\n');
 }
 
 async function recognizePage(worker, canvas) {

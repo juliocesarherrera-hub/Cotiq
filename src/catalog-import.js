@@ -77,8 +77,8 @@ export function suggestCatalogCategory(description) {
 }
 
 export function catalogItemsToQuoteLines(items) {
-  return items.map(({ concept, unit, price }) => ({
-    quantity: 1,
+  return items.map(({ concept, unit, price, quantity }) => ({
+    quantity: quantity || 1,
     unit: unit || 'Servicio',
     description: concept,
     unitPrice: price === null ? '' : String(price)
@@ -180,6 +180,7 @@ function parseUnit(description, unitCell = '') {
   if (explicitUnit) return getExplicitUnit(explicitUnit[1]);
 
   const normalized = normalizeText(description);
+  if (/\b(?:shorts?|jeans?|pantalones?|faldas?|vestidos?|cacheteros?|blusas?|camisas?|zapatos?|lavabo|sanitario|interruptor|contacto|luminaria|puerta)\b/.test(normalized)) return 'Pieza';
   if (/\b(?:pintura|pintar|impermeabilizacion|azulejo|piso|tablaroca|aplanado|yeso)\b/.test(normalized)) return 'm²';
   if (/\b(?:concreto|excavacion|relleno|cimentacion)\b/.test(normalized)) return 'm³';
   if (/\b(?:mano de obra|instalacion|reparacion|mantenimiento|servicio|diagnostico)\b/.test(normalized)) return 'Servicio';
@@ -197,16 +198,50 @@ function isUnitCell(value) {
   return getExplicitUnit(value) !== null;
 }
 
-function parseStructuredLine(line) {
+function getHeaderColumns(line) {
   if (!/[\t|]/.test(line)) return null;
-  const cells = line.split(/\t+|\s*\|\s*/).map((cell) => cell.trim()).filter(Boolean);
+  const cells = line.split(/\t|\s*\|\s*/).map((cell) => normalizeText(cell.trim()));
+  const columns = cells.map((cell) => {
+    if (/^(?:cant(?:idad)?|qty)$/.test(cell)) return 'quantity';
+    if (/^(?:desc(?:ripcion)?|concepto|partida)$/.test(cell)) return 'concept';
+    if (/^(?:unidad|unit)$/.test(cell)) return 'unit';
+    if (/(?:valor|precio)\s*unitario|unitario/.test(cell)) return 'unitPrice';
+    if (/^(?:precio|importe|total|valor)$/.test(cell)) return 'amount';
+    return '';
+  });
+  if (!columns.includes('concept') || !columns.some((column) => ['amount', 'unitPrice'].includes(column))) return null;
+  return {
+    quantityIndex: columns.indexOf('quantity'),
+    conceptIndex: columns.indexOf('concept'),
+    unitIndex: columns.indexOf('unit'),
+    unitPriceIndex: columns.indexOf('unitPrice'),
+    amountIndex: columns.lastIndexOf('amount')
+  };
+}
+
+function parseStructuredLine(line, headerColumns = null) {
+  if (!/[\t|]/.test(line)) return null;
+  const cells = line.split(/\t|\s*\|\s*/).map((cell) => cell.trim());
+  while (cells.length > 0 && !cells.at(-1)) cells.pop();
   if (cells.length < 2) return null;
   if (/^\s*(?:cantidad|descripci[oó]n|concepto|unidad|precio|importe|subtotal|total|iva|impuesto|descuento|p[aá]gina|observaciones)\b/i.test(cells.join(' '))) return [];
 
+  const quantityCell = headerColumns?.quantityIndex >= 0
+    ? cells[headerColumns.quantityIndex] || ''
+    : cells[0] || '';
+  const parsedQuantity = Number(quantityCell.replace(',', '.'));
+  const quantity = Number.isFinite(parsedQuantity) && parsedQuantity > 0 && parsedQuantity <= 100000
+    ? parsedQuantity
+    : 1;
+  const unitIndex = headerColumns?.unitIndex ?? -1;
   let priceIndex = -1;
   let price = null;
-  for (let index = cells.length - 1; index > 0; index -= 1) {
-    const candidate = parsePrice(cells[index], true);
+  const priceIndexes = headerColumns
+    ? [headerColumns.unitPriceIndex, headerColumns.amountIndex].filter((index) => index >= 0)
+    : cells.map((_, index) => index).reverse();
+
+  for (const index of priceIndexes) {
+    const candidate = parsePrice(cells[index] || '', true);
     if (candidate !== null) {
       priceIndex = index;
       price = candidate;
@@ -214,22 +249,32 @@ function parseStructuredLine(line) {
     }
   }
 
-  const unitCell = cells.find(isUnitCell) || '';
-  const rawDescription = cleanDescription(cells
-    .filter((cell, index) => index !== priceIndex
-      && !isUnitCell(cell)
-      && !(index === 0 && /^\d{1,3}$/.test(cell)))
-    .join(' '));
+  const conceptIndex = headerColumns?.conceptIndex ?? -1;
+  const unitCell = unitIndex >= 0 ? cells[unitIndex] || '' : cells.find(isUnitCell) || '';
+  const rawDescription = cleanDescription(conceptIndex >= 0
+    ? cells[conceptIndex] || ''
+    : cells
+      .filter((cell, index) => index !== priceIndex
+        && index !== unitIndex
+        && !isUnitCell(cell)
+        && !(index === 0 && /^\d{1,3}$/.test(cell)))
+      .join(' '));
   const unit = parseUnit(rawDescription, unitCell);
   const description = unitCell ? rawDescription : removeInlineUnit(rawDescription);
   if (isDocumentNoise(description)) return [];
 
   const hasCatalogTerm = ITEM_DESCRIPTION_TERMS.some((term) => normalizeText(description).includes(term));
   if (price === null && !hasCatalogTerm && !unitCell) return [];
-  return [{ concept: description, unit, price, category: suggestCatalogCategory(description) }];
+  const hasUnitPriceColumn = headerColumns?.unitPriceIndex >= 0;
+  const unitPrice = price !== null && quantity > 1 && unitIndex < 0 && !hasUnitPriceColumn
+    ? Math.round((price / quantity) * 100) / 100
+    : price;
+  return [{ concept: description, unit, price: unitPrice, quantity, category: suggestCatalogCategory(description) }];
 }
 
 function parsePlainLine(line, documentCategory) {
+  const quantityMatch = line.match(/^\s*(\d+(?:[.,]\d+)?)\s+/);
+  const quantity = quantityMatch ? Number(quantityMatch[1].replace(',', '.')) || 1 : 1;
   const cleanedLine = cleanDescription(line);
   if (isDocumentNoise(cleanedLine)) return [];
   const trailingPrice = extractTrailingPrice(cleanedLine);
@@ -246,19 +291,25 @@ function parsePlainLine(line, documentCategory) {
   const category = documentCategory !== 'Otros' && ['Otros', 'Servicios'].includes(suggestedCategory)
     ? documentCategory
     : suggestedCategory;
-  return [{ concept: description, unit, price, category }];
+  return [{ concept: description, unit, price, quantity, category }];
 }
 
 export function extractCatalogItems(text) {
   const seen = new Set();
   const documentCategory = suggestCatalogCategory(text);
+  let headerColumns = null;
   return text
     .replace(/\r/g, '\n')
     .split(/\n+/)
     .flatMap((rawLine) => {
-      const line = rawLine.trim();
+      const line = rawLine.replace(/^[ ]+|[ ]+$/g, '');
       if (!line) return [];
-      const items = parseStructuredLine(line);
+      const detectedHeaders = getHeaderColumns(line);
+      if (detectedHeaders) {
+        headerColumns = detectedHeaders;
+        return [];
+      }
+      const items = parseStructuredLine(line, headerColumns);
       return items === null ? parsePlainLine(line, documentCategory) : items;
     })
     .filter((item) => {

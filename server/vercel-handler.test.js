@@ -48,4 +48,28 @@ test('Vercel API handler initializes and dispatches Express routes', async (t) =
 
   assert.equal(loginResponse.status, 401);
   assert.deepEqual(await loginResponse.json(), { error: 'Correo o contraseña incorrectos.' });
+
+  const loopbackAliasResponse = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: 'http://127.0.0.1:4173'
+    },
+    body: JSON.stringify({ email: 'missing@example.com', password: 'invalid-password' })
+  });
+
+  assert.equal(loopbackAliasResponse.status, 401);
+  assert.deepEqual(await loopbackAliasResponse.json(), { error: 'Correo o contraseña incorrectos.' });
+
+  const unexpectedPortResponse = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: 'http://127.0.0.1:4174'
+    },
+    body: JSON.stringify({ email: 'missing@example.com', password: 'invalid-password' })
+  });
+
+  assert.equal(unexpectedPortResponse.status, 403);
+  assert.deepEqual(await unexpectedPortResponse.json(), { error: 'Origen de solicitud no permitido.' });
 });

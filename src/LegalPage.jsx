@@ -92,6 +92,9 @@ export default function LegalPage() {
           <p>
             Las cotizaciones, clientes, catálogo y perfil de empresa —que pueden incluir nombres, teléfonos, correos, RFC, domicilios, fotografías, firmas, datos bancarios o CLABE— se guardan localmente en el almacenamiento del navegador de tu dispositivo y no se sincronizan con la cuenta ni se guardan en los servidores de Cotiq como parte del funcionamiento ordinario. Actualmente no se aíslan por cuenta dentro del mismo perfil del navegador: cualquier persona con acceso a ese perfil podría verlos. No uses un dispositivo o perfil de navegador compartido para información confidencial. Si borras los datos del navegador o dispositivo podrías perderlos; expórtalos o imprime los documentos importantes.
           </p>
+          <p>
+            Si importas una lista en PDF o foto al catálogo, Cotiq procesa el archivo en el navegador de tu dispositivo; el archivo no se transmite ni se guarda. Solo los conceptos y categorías que confirmes se agregan al catálogo local.
+          </p>
           <h3 className="pt-2 font-bold text-slate-100">Proveedores y comunicaciones</h3>
           <p>
             Mercado Pago procesa el checkout y los datos de pago conforme a sus propios avisos y condiciones; Cotiq no solicita ni almacena el número completo de tarjeta o el código de seguridad. Si generas el QR SPEI, el valor de la CLABE se envía como parámetro a api.qrserver.com para producir la imagen. Si compartes una cotización por WhatsApp o usas dictado por voz, la información necesaria se entrega al servicio o proveedor que selecciones, sujeto a sus propias políticas. Revisa sus avisos antes de usar esas funciones.

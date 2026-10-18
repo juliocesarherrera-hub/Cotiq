@@ -7,6 +7,8 @@ import bcrypt from 'bcryptjs';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { MercadoPagoConfig, Payment, Preference } from 'mercadopago';
+import { GoogleGenAI, Type } from '@google/genai';
+import multer from 'multer';
 import { pool, initializeDatabase, inTransaction } from './database.js';
 import { LEGAL_TERMS_VERSION } from '../legal-config.js';
 import {
@@ -91,7 +93,7 @@ function regenerateSession(req) {
 function authenticate(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Inicia sesión para continuar.' });
   pool.query(
-    'SELECT id, email, has_lifetime, credits FROM users WHERE id = $1',
+    'SELECT id, email, has_lifetime, credits FROM users WHERE id = \$1',
     [req.session.userId]
   ).then(({ rows }) => {
     if (!rows[0]) {
@@ -105,7 +107,26 @@ function authenticate(req, res, next) {
 
 function requireSameOrigin(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  if (req.get('origin') !== appOrigin) {
+  const requestOrigin = req.get('origin');
+  let isAllowedOrigin = requestOrigin === appOrigin;
+
+  if (!isAllowedOrigin && !isProduction && requestOrigin) {
+    try {
+      const configuredUrl = new URL(appOrigin);
+      const requestUrl = new URL(requestOrigin);
+      const loopbackHosts = new Set(['localhost', '127.0.0.1']);
+      const isLoopbackAlias = loopbackHosts.has(configuredUrl.hostname)
+        && loopbackHosts.has(requestUrl.hostname);
+
+      isAllowedOrigin = isLoopbackAlias
+        && configuredUrl.protocol === requestUrl.protocol
+        && configuredUrl.port === requestUrl.port;
+    } catch {
+      isAllowedOrigin = false;
+    }
+  }
+
+  if (!isAllowedOrigin) {
     return res.status(403).json({ error: 'Origen de solicitud no permitido.' });
   }
   next();
@@ -114,6 +135,13 @@ function requireSameOrigin(req, res, next) {
 const mpClient = new MercadoPagoConfig({ accessToken, options: { timeout: 10000 } });
 const preferenceApi = new Preference(mpClient);
 const paymentApi = new Payment(mpClient);
+
+// Configuración de Multer y cliente de IA
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.set('trust proxy', isProduction ? 1 : false);
 app.use(helmet());
@@ -139,7 +167,7 @@ app.post('/api/payments/webhook', async (req, res, next) => {
 
     await inTransaction(async (client) => {
       const { rows } = await client.query(
-        'SELECT id, user_id, product_id, amount_cents, status FROM purchases WHERE id = $1 FOR UPDATE',
+        'SELECT id, user_id, product_id, amount_cents, status FROM purchases WHERE id = \$1 FOR UPDATE',
         [purchaseId]
       );
       const purchase = rows[0];
@@ -151,7 +179,7 @@ app.post('/api/payments/webhook', async (req, res, next) => {
         && toCents(payment.transaction_amount) === Number(purchase.amount_cents)
         && purchase.amount_cents === product.amountCents;
       if (!matchesPurchase) {
-        await client.query('UPDATE purchases SET status = $2, updated_at = NOW() WHERE id = $1', [purchase.id, 'review_required']);
+        await client.query('UPDATE purchases SET status = \$2, updated_at = NOW() WHERE id = \$1', [purchase.id, 'review_required']);
         console.error(`Mercado Pago payment ${dataId} does not match purchase ${purchase.id}.`);
         return;
       }
@@ -167,18 +195,18 @@ app.post('/api/payments/webhook', async (req, res, next) => {
       );
 
       if (status === 'approved' || isReversed) {
-        await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [purchase.user_id]);
+        await client.query('SELECT id FROM users WHERE id = \$1 FOR UPDATE', [purchase.user_id]);
         const { rows: userPurchases } = await client.query(
-          'SELECT product_id, status, fulfilled FROM purchases WHERE user_id = $1',
+          'SELECT product_id, status, fulfilled FROM purchases WHERE user_id = \$1',
           [purchase.user_id]
         );
         const { rows: consumptionRows } = await client.query(
-          'SELECT COUNT(*) AS count FROM credit_consumptions WHERE user_id = $1',
+          'SELECT COUNT(*) AS count FROM credit_consumptions WHERE user_id = \$1',
           [purchase.user_id]
         );
         const entitlements = deriveAccountEntitlements(userPurchases, Number(consumptionRows[0].count));
         await client.query(
-          'UPDATE users SET has_lifetime = $2, credits = $3 WHERE id = $1',
+          'UPDATE users SET has_lifetime = \$2, credits = \$3 WHERE id = \$1',
           [purchase.user_id, entitlements.hasLifetime, entitlements.credits]
         );
       }
@@ -224,7 +252,7 @@ app.post('/api/auth/register', authLimiter, async (req, res, next) => {
     }
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+\$/.test(email) || email.length > 254) {
       return res.status(400).json({ error: 'Escribe un correo electrónico válido.' });
     }
     if (password.length < 12 || Buffer.byteLength(password, 'utf8') > 72) {
@@ -254,7 +282,7 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     const { rows } = await pool.query(
-      'SELECT id, email, password_hash, has_lifetime, credits FROM users WHERE email = $1',
+      'SELECT id, email, password_hash, has_lifetime, credits FROM users WHERE email = \$1',
       [email]
     );
     const user = rows[0];
@@ -333,7 +361,7 @@ app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, re
             pending: `${appOrigin}/?mp_payment=return&purchase_id=${purchaseId}`
           },
           ...(new URL(appOrigin).protocol === 'https:' ? { auto_return: 'approved' } : {}),
-          statement_descriptor: 'COTIQ',
+          statement_descriptor: 'PRESUFAST',
           metadata: { purchase_id: purchaseId, user_id: req.user.id }
         },
         requestOptions: { idempotencyKey: purchaseId }
@@ -341,7 +369,7 @@ app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, re
       const checkoutUrl = isProduction ? preference.init_point : preference.sandbox_init_point;
       if (!checkoutUrl) throw new Error('Mercado Pago no devolvió una URL de checkout para esta preferencia.');
 
-      await pool.query('UPDATE purchases SET preference_id = $2, status = $3, updated_at = NOW() WHERE id = $1', [
+      await pool.query('UPDATE purchases SET preference_id = \$2, status = \$3, updated_at = NOW() WHERE id = \$1', [
         purchaseId,
         preference.id,
         'pending'
@@ -349,7 +377,7 @@ app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, re
       res.status(201).json({ purchaseId, checkoutUrl });
     } catch (error) {
       await pool.query(
-        'UPDATE purchases SET status = $2, updated_at = NOW() WHERE id = $1',
+        'UPDATE purchases SET status = \$2, updated_at = NOW() WHERE id = \$1',
         [purchaseId, 'checkout_error']
       );
       if (error.status === 401 || error.status === 403) {
@@ -394,7 +422,7 @@ app.get('/api/purchases/:purchaseId', authenticate, async (req, res, next) => {
     );
     if (!rows[0]) return res.status(404).json({ error: 'No se encontró esa compra en tu cuenta.' });
     const { rows: accountRows } = await pool.query(
-      'SELECT id, email, has_lifetime, credits FROM users WHERE id = $1',
+      'SELECT id, email, has_lifetime, credits FROM users WHERE id = \$1',
       [req.user.id]
     );
     res.json({ purchase: rows[0], user: accountSnapshot(accountRows[0]) });
@@ -410,7 +438,7 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
 
     const result = await inTransaction(async (client) => {
       const { rows: users } = await client.query(
-        'SELECT id, has_lifetime, credits FROM users WHERE id = $1 FOR UPDATE',
+        'SELECT id, has_lifetime, credits FROM users WHERE id = \$1 FOR UPDATE',
         [req.user.id]
       );
       const user = users[0];
@@ -429,12 +457,71 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
       }
 
       const { rows: updated } = await client.query(
-        'UPDATE users SET credits = credits - 1 WHERE id = $1 RETURNING credits',
+        'UPDATE users SET credits = credits - 1 WHERE id = \$1 RETURNING credits',
         [req.user.id]
       );
       return { plan: 'creditos', credits: Number(updated[0].credits) };
     });
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Ruta para importar el catálogo desde PDF/Fotos usando IA
+app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se subió ningún archivo.' });
+    }
+
+    const base64Data = req.file.buffer.toString('base64');
+    const mimeType = req.file.mimetype;
+
+    const prompt = `Analiza este documento o imagen y extrae la lista de conceptos, productos o servicios con sus precios.
+    Reglas estrictas:
+    1. Ignora fechas, números de folio, membretes de empresas o textos decorativos.
+    2. Agrupa descripciones largas que pertenezcan al mismo producto.
+    3. Asigna la unidad adecuada (Servicio, Pieza, Metro, Hora, etc.) y una categoría sugerida.
+    4. Devuelve únicamente números válidos para los precios.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-1.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                data: base64Data,
+                mimeType: mimeType,
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          description: 'Lista de productos o servicios extraídos',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              concepto: { type: Type.STRING, description: 'Nombre o descripción del producto o servicio' },
+              unidad: { type: Type.STRING, description: 'Servicio, Pieza, Hora, etc.' },
+              categoria: { type: Type.STRING, description: 'Categoría sugerida' },
+              precio: { type: Type.NUMBER, description: 'Precio numérico' },
+            },
+            required: ['concepto', 'unidad', 'categoria', 'precio'],
+          },
+        },
+      },
+    });
+
+    const conceptos = JSON.parse(response.text);
+    res.json({ success: true, conceptos });
   } catch (error) {
     next(error);
   }
