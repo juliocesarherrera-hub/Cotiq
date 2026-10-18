@@ -14,20 +14,33 @@ function getOcrAssetUrl(path) {
 }
 
 function getPdfPageText(content) {
-  let text = '';
-  let previousY = null;
+  const rows = [];
   for (const item of content.items) {
     if (typeof item.str !== 'string') continue;
-    const currentY = item.transform?.[5];
-    const isNewLine = Number.isFinite(currentY)
-      && Number.isFinite(previousY)
-      && Math.abs(currentY - previousY) > 2;
-    if (text && !text.endsWith('\n')) text += isNewLine ? '\n' : ' ';
-    text += item.str;
-    if (item.hasEOL) text += '\n';
-    previousY = currentY;
+    const x = item.transform?.[4];
+    const y = item.transform?.[5];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !item.str.trim()) continue;
+    let row = rows.find((candidate) => Math.abs(candidate.y - y) <= 3);
+    if (!row) {
+      row = { y, items: [] };
+      rows.push(row);
+    }
+    row.items.push({ text: item.str.trim(), x, width: Number(item.width) || 0 });
   }
-  return text;
+
+  return rows
+    .sort((first, second) => second.y - first.y)
+    .map(({ items }) => {
+      const sortedItems = items.sort((first, second) => first.x - second.x);
+      return sortedItems.reduce((line, item, index) => {
+        if (index === 0) return item.text;
+        const previous = sortedItems[index - 1];
+        const gap = item.x - (previous.x + previous.width);
+        const separator = gap > Math.max(18, Math.min(previous.width, item.width) * 1.25) ? '\t' : ' ';
+        return `${line}${separator}${item.text}`;
+      }, '');
+    })
+    .join('\n');
 }
 
 async function getOcrWorker(onProgress) {
@@ -86,6 +99,36 @@ function getPriceRows(tsv) {
     .sort((first, second) => first.top - second.top);
 }
 
+function getOcrText(tsv, fallbackText) {
+  const rows = new Map();
+  for (const row of tsv.split(/\r?\n/).slice(1)) {
+    const columns = row.split('\t');
+    if (columns[0] !== '5' || columns.length < 12 || !columns[11].trim()) continue;
+
+    const key = columns.slice(1, 5).join(':');
+    const word = {
+      text: columns[11].trim(),
+      left: Number(columns[6]),
+      right: Number(columns[6]) + Number(columns[8])
+    };
+    if (!rows.has(key)) rows.set(key, []);
+    rows.get(key).push(word);
+  }
+
+  const lines = Array.from(rows.values())
+    .map((words) => words.sort((first, second) => first.left - second.left)
+      .reduce((line, word, index, orderedWords) => {
+        if (index === 0) return word.text;
+        const previous = orderedWords[index - 1];
+        const gap = word.left - previous.right;
+        const separator = gap > 32 ? '\t' : ' ';
+        return `${line}${separator}${word.text}`;
+      }, ''))
+    .filter(Boolean);
+
+  return lines.length > 0 ? lines.join('\n') : fallbackText;
+}
+
 function getTableRectangle(tsv, width, height) {
   const rows = getPriceRows(tsv);
   if (rows.length === 0) return null;
@@ -124,8 +167,9 @@ function mergeFocusedDescriptions(primaryData, focusedData) {
 async function recognizePage(worker, canvas) {
   await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
   const { data: primaryData } = await worker.recognize(canvas, {}, { text: true, tsv: true });
+  const primaryText = getOcrText(primaryData.tsv, primaryData.text);
   const rectangle = getTableRectangle(primaryData.tsv, canvas.width, canvas.height);
-  let recognizedText = primaryData.text;
+  let recognizedText = primaryText;
 
   if (rectangle) {
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_COLUMN });
@@ -134,13 +178,17 @@ async function recognizePage(worker, canvas) {
       { rectangle },
       { text: true, tsv: true }
     );
-    recognizedText = mergeFocusedDescriptions(primaryData, focusedData);
+    recognizedText = mergeFocusedDescriptions(
+      { ...primaryData, text: primaryText },
+      { ...focusedData, text: getOcrText(focusedData.tsv, focusedData.text) }
+    );
   }
 
   if (extractCatalogItems(recognizedText).length === 0) {
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
     const { data: sparseData } = await worker.recognize(canvas, {}, { text: true, tsv: true });
-    if (extractCatalogItems(sparseData.text).length > 0) return sparseData.text;
+    const sparseText = getOcrText(sparseData.tsv, sparseData.text);
+    if (extractCatalogItems(sparseText).length > 0) return sparseText;
   }
 
   return recognizedText;

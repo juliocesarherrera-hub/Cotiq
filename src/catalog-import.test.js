@@ -20,7 +20,7 @@ test('extracts catalog items, units, prices, and categories from a price list', 
   ].join('\n'));
 
   assert.deepEqual(items, [
-    { concept: 'Pintura vinílica 20 L', unit: 'L', price: 1250, category: 'Acabados' },
+    { concept: 'Pintura vinílica', unit: 'L', price: 1250, category: 'Acabados' },
     { concept: 'Instalación de Minisplit 1.5 Ton', unit: 'Servicio', price: 3200, category: 'Climatización' },
     { concept: 'Suministro de cable eléctrico', unit: 'Servicio', price: 120.5, category: 'Electricidad' }
   ]);
@@ -41,6 +41,32 @@ test('extracts unmarked whole-peso and Mexican-formatted prices without mistakin
   ]);
 });
 
+test('uses table columns to keep quantities, units, prices, and phone details out of the concept', () => {
+  const items = extractCatalogItems([
+    'Cantidad\tConcepto\tUnidad\tPrecio',
+    '2\tPintura vinílica Tel. 442 123 4567\tm2\t1.250,00',
+    '1\tInstalación de minisplit\tServicio\t3,200.50',
+    '442 123 4567'
+  ].join('\n'));
+
+  assert.deepEqual(items, [
+    { concept: 'Pintura vinílica', unit: 'm²', price: 1250, category: 'Acabados' },
+    { concept: 'Instalación de minisplit', unit: 'Servicio', price: 3200.5, category: 'Climatización' }
+  ]);
+});
+
+test('infers common area and volume units when the document omits a unit column', () => {
+  const items = extractCatalogItems([
+    'Pintura vinílica para muros $180',
+    'Suministro de concreto 2,450'
+  ].join('\n'));
+
+  assert.deepEqual(items.map(({ concept, unit, price }) => ({ concept, unit, price })), [
+    { concept: 'Pintura vinílica para muros', unit: 'm²', price: 180 },
+    { concept: 'Suministro de concreto', unit: 'm³', price: 2450 }
+  ]);
+});
+
 test('deduplicates repeated lines and keeps unpriced recognizable catalog items for review', () => {
   const items = extractCatalogItems([
     'Pintura vinílica $150',
@@ -51,7 +77,7 @@ test('deduplicates repeated lines and keeps unpriced recognizable catalog items 
   assert.equal(items.length, 2);
   assert.equal(items[0].price, 150);
   assert.deepEqual(items[1], {
-    concept: 'Tubería de cobre 1/2 m²',
+    concept: 'Tubería de cobre 1/2',
     unit: 'm²',
     price: null,
     category: 'Plomería'
