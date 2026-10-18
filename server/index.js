@@ -33,6 +33,7 @@ let initialization;
 export { app };
 
 function validateEnvironment() {
+  appOrigin = process.env.APP_ORIGIN;
   if (!appOrigin) throw new Error('Falta APP_ORIGIN.');
   const parsedOrigin = new URL(appOrigin);
   if (parsedOrigin.pathname !== '/' || parsedOrigin.search || parsedOrigin.hash) {
@@ -130,7 +131,6 @@ function requireSameOrigin(req, res, next) {
   next();
 }
 
-// Inicialización diferida de Mercado Pago para proteger la carga del servidor
 let preferenceApi;
 let paymentApi;
 
@@ -143,7 +143,6 @@ function getMercadoPagoServices() {
   return { preferenceApi, paymentApi };
 }
 
-// Configuración de Multer para procesamiento de archivos en memoria
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
@@ -491,7 +490,8 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
 // Importación de catálogo mediante IA (Gemini API)
 app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async (req, res, next) => {
   try {
-    if (!process.env.GEMINI_API_KEY) {
+    const rawKey = process.env.GEMINI_API_KEY;
+    if (!rawKey) {
       return res.status(500).json({
         error: 'Falta configurar GEMINI_API_KEY en las variables de entorno del servidor.'
       });
@@ -501,9 +501,10 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
       return res.status(400).json({ error: 'No se subió ningún archivo.' });
     }
 
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = rawKey.trim().replace(/^["']|["']\$/g, '');
+    const ai = new GoogleGenAI({ apiKey });
     const base64Data = req.file.buffer.toString('base64');
-    const mimeType = req.file.mimetype;
+    const mimeType = req.file.mimetype || 'image/jpeg';
 
     const prompt = `Analiza este documento o imagen y extrae la lista de conceptos, productos o servicios con sus precios.
     Reglas estrictas:
@@ -550,6 +551,7 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
     const conceptos = JSON.parse(response.text);
     res.json({ success: true, conceptos });
   } catch (error) {
+    console.error('Error detallado de Gemini API:', error);
     next(error);
   }
 });
