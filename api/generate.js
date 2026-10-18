@@ -5,15 +5,14 @@ export default async function handler(req, res) {
 
   const { prompt, modelId } = req.body;
 
-  // Traducimos el ID de tu pantalla al formato exacto que pide OpenRouter
+  // Nombres corregidos exactamente como los exige OpenRouter
   const modelMapping = {
-    'gemini-1.5-flash': 'google/gemini-1.5-flash',
-    'gemini-1.5-pro': 'google/gemini-1.5-pro',
+    'gemini-1.5-flash': 'google/gemini-flash-1.5',
+    'gemini-1.5-pro': 'google/gemini-pro-1.5',
     'gpt-4o-mini': 'openai/gpt-4o-mini'
   };
 
-  // Si por alguna razón no detecta el modelo, usa Flash por defecto
-  const openRouterModel = modelMapping[modelId] || 'google/gemini-1.5-flash';
+  const openRouterModel = modelMapping[modelId] || 'google/gemini-flash-1.5';
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -31,11 +30,9 @@ export default async function handler(req, res) {
     const data = await response.json();
 
     if (!response.ok) {
-      // Si la API falla, devolvemos el error exacto para saber qué falló
       return res.status(response.status).json({ error: data.error?.message || 'Error en la API de IA' });
     }
 
-    // Si todo sale bien, extraemos el texto y se lo mandamos a tu página
     return res.status(200).json({ text: data.choices[0].message.content });
   } catch (error) {
     return res.status(500).json({ error: 'Error interno del servidor al contactar a la IA.' });
