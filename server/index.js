@@ -80,29 +80,29 @@ function accountSnapshot(user) {
 
 function saveSession(req) {
   return new Promise((resolve, reject) => {
-    req.session.save((error) => error ? reject(error) : resolve());
+    req.session.save((error) => (error ? reject(error) : resolve()));
   });
 }
 
 function regenerateSession(req) {
   return new Promise((resolve, reject) => {
-    req.session.regenerate((error) => error ? reject(error) : resolve());
+    req.session.regenerate((error) => (error ? reject(error) : resolve()));
   });
 }
 
 function authenticate(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Inicia sesión para continuar.' });
-  pool.query(
-    'SELECT id, email, has_lifetime, credits FROM users WHERE id = \$1',
-    [req.session.userId]
-  ).then(({ rows }) => {
-    if (!rows[0]) {
-      req.session.destroy(() => {});
-      return res.status(401).json({ error: 'La sesión ya no es válida. Inicia sesión de nuevo.' });
-    }
-    req.user = rows[0];
-    next();
-  }).catch(next);
+  pool
+    .query('SELECT id, email, has_lifetime, credits FROM users WHERE id = \$1', [req.session.userId])
+    .then(({ rows }) => {
+      if (!rows[0]) {
+        req.session.destroy(() => {});
+        return res.status(401).json({ error: 'La sesión ya no es válida. Inicia sesión de nuevo.' });
+      }
+      req.user = rows[0];
+      next();
+    })
+    .catch(next);
 }
 
 function requireSameOrigin(req, res, next) {
@@ -115,12 +115,10 @@ function requireSameOrigin(req, res, next) {
       const configuredUrl = new URL(appOrigin);
       const requestUrl = new URL(requestOrigin);
       const loopbackHosts = new Set(['localhost', '127.0.0.1']);
-      const isLoopbackAlias = loopbackHosts.has(configuredUrl.hostname)
-        && loopbackHosts.has(requestUrl.hostname);
+      const isLoopbackAlias = loopbackHosts.has(configuredUrl.hostname) && loopbackHosts.has(requestUrl.hostname);
 
-      isAllowedOrigin = isLoopbackAlias
-        && configuredUrl.protocol === requestUrl.protocol
-        && configuredUrl.port === requestUrl.port;
+      isAllowedOrigin =
+        isLoopbackAlias && configuredUrl.protocol === requestUrl.protocol && configuredUrl.port === requestUrl.port;
     } catch {
       isAllowedOrigin = false;
     }
@@ -132,11 +130,20 @@ function requireSameOrigin(req, res, next) {
   next();
 }
 
-const mpClient = new MercadoPagoConfig({ accessToken, options: { timeout: 10000 } });
-const preferenceApi = new Preference(mpClient);
-const paymentApi = new Payment(mpClient);
+// Inicialización diferida de Mercado Pago para proteger la carga del servidor
+let preferenceApi;
+let paymentApi;
 
-// Configuración de Multer para archivos en memoria
+function getMercadoPagoServices() {
+  if (!preferenceApi || !paymentApi) {
+    const mpClient = new MercadoPagoConfig({ accessToken, options: { timeout: 10000 } });
+    preferenceApi = new Preference(mpClient);
+    paymentApi = new Payment(mpClient);
+  }
+  return { preferenceApi, paymentApi };
+}
+
+// Configuración de Multer para procesamiento de archivos en memoria
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
@@ -150,17 +157,20 @@ app.post('/api/payments/webhook', async (req, res, next) => {
   const dataId = req.body?.data?.id ?? req.query['data.id'] ?? req.query.id;
   if (req.body?.type && req.body.type !== 'payment') return res.sendStatus(200);
 
-  if (!isValidWebhookSignature({
-    signature: req.get('x-signature'),
-    requestId: req.get('x-request-id'),
-    dataId: dataId == null ? '' : String(dataId),
-    secret: webhookSecret
-  })) {
+  if (
+    !isValidWebhookSignature({
+      signature: req.get('x-signature'),
+      requestId: req.get('x-request-id'),
+      dataId: dataId == null ? '' : String(dataId),
+      secret: webhookSecret
+    })
+  ) {
     return res.status(401).json({ error: 'Firma de notificación inválida.' });
   }
 
   try {
-    const payment = await paymentApi.get({ id: String(dataId) });
+    const { paymentApi: mpPayment } = getMercadoPagoServices();
+    const payment = await mpPayment.get({ id: String(dataId) });
     const purchaseId = payment.external_reference;
     if (!purchaseId) return res.sendStatus(200);
 
@@ -173,12 +183,17 @@ app.post('/api/payments/webhook', async (req, res, next) => {
       if (!purchase) return;
 
       const product = PRODUCTS[purchase.product_id];
-      const matchesPurchase = product
-        && payment.currency_id === 'MXN'
-        && toCents(payment.transaction_amount) === Number(purchase.amount_cents)
-        && purchase.amount_cents === product.amountCents;
+      const matchesPurchase =
+        product &&
+        payment.currency_id === 'MXN' &&
+        toCents(payment.transaction_amount) === Number(purchase.amount_cents) &&
+        purchase.amount_cents === product.amountCents;
+
       if (!matchesPurchase) {
-        await client.query('UPDATE purchases SET status = \$2, updated_at = NOW() WHERE id = \$1', [purchase.id, 'review_required']);
+        await client.query('UPDATE purchases SET status = \$2, updated_at = NOW() WHERE id = \$1', [
+          purchase.id,
+          'review_required'
+        ]);
         console.error(`Mercado Pago payment ${dataId} does not match purchase ${purchase.id}.`);
         return;
       }
@@ -204,10 +219,11 @@ app.post('/api/payments/webhook', async (req, res, next) => {
           [purchase.user_id]
         );
         const entitlements = deriveAccountEntitlements(userPurchases, Number(consumptionRows[0].count));
-        await client.query(
-          'UPDATE users SET has_lifetime = \$2, credits = \$3 WHERE id = \$1',
-          [purchase.user_id, entitlements.hasLifetime, entitlements.credits]
-        );
+        await client.query('UPDATE users SET has_lifetime = \$2, credits = \$3 WHERE id = \$1', [
+          purchase.user_id,
+          entitlements.hasLifetime,
+          entitlements.credits
+        ]);
       }
     });
 
@@ -218,19 +234,21 @@ app.post('/api/payments/webhook', async (req, res, next) => {
 });
 
 app.use('/api', requireSameOrigin);
-app.use(session({
-  name: sessionCookie,
-  store: new PgSessionStore({ pool, tableName: 'sessions', createTableIfMissing: false }),
-  secret: sessionSecret,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000
-  }
-}));
+app.use(
+  session({
+    name: sessionCookie,
+    store: new PgSessionStore({ pool, tableName: 'sessions', createTableIfMissing: false }),
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    }
+  })
+);
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false });
 const checkoutLimiter = rateLimit({ windowMs: 60 * 1000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false });
@@ -247,7 +265,9 @@ app.get('/api/health', async (req, res, next) => {
 app.post('/api/auth/register', authLimiter, async (req, res, next) => {
   try {
     if (req.body?.acceptedTermsVersion !== LEGAL_TERMS_VERSION || req.body?.confirmedAdult !== true) {
-      return res.status(400).json({ error: 'Confirma que tienes 18 años o más y acepta los términos vigentes para crear una cuenta.' });
+      return res
+        .status(400)
+        .json({ error: 'Confirma que tienes 18 años o más y acepta los términos vigentes para crear una cuenta.' });
     }
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -280,10 +300,9 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
   try {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const { rows } = await pool.query(
-      'SELECT id, email, password_hash, has_lifetime, credits FROM users WHERE email = \$1',
-      [email]
-    );
+    const { rows } = await pool.query('SELECT id, email, password_hash, has_lifetime, credits FROM users WHERE email = \$1', [
+      email
+    ]);
     const user = rows[0];
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: 'Correo o contraseña incorrectos.' });
@@ -322,10 +341,14 @@ app.get('/api/account', authenticate, (req, res) => {
 app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, res, next) => {
   try {
     if (req.body?.acceptedTermsVersion !== LEGAL_TERMS_VERSION) {
-      return res.status(400).json({ error: 'Los términos se actualizaron. Recarga la página y vuelve a aceptar los términos vigentes.' });
+      return res
+        .status(400)
+        .json({ error: 'Los términos se actualizaron. Recarga la página y vuelve a aceptar los términos vigentes.' });
     }
     if (req.body?.confirmedAdult !== true) {
-      return res.status(400).json({ error: 'Confirma que tienes 18 años o más y acepta los términos vigentes para continuar con la compra.' });
+      return res
+        .status(400)
+        .json({ error: 'Confirma que tienes 18 años o más y acepta los términos vigentes para continuar con la compra.' });
     }
     const productId = req.body?.productId;
     const product = PRODUCTS[productId];
@@ -342,15 +365,18 @@ app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, re
     );
 
     try {
-      const preference = await preferenceApi.create({
+      const { preferenceApi: mpPref } = getMercadoPagoServices();
+      const preference = await mpPref.create({
         body: {
-          items: [{
-            id: productId,
-            title: product.title,
-            quantity: 1,
-            currency_id: 'MXN',
-            unit_price: product.amountCents / 100
-          }],
+          items: [
+            {
+              id: productId,
+              title: product.title,
+              quantity: 1,
+              currency_id: 'MXN',
+              unit_price: product.amountCents / 100
+            }
+          ],
           payer: { email: req.user.email },
           external_reference: purchaseId,
           notification_url: webhookUrl || `${appOrigin}/api/payments/webhook`,
@@ -365,6 +391,7 @@ app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, re
         },
         requestOptions: { idempotencyKey: purchaseId }
       });
+
       const checkoutUrl = isProduction ? preference.init_point : preference.sandbox_init_point;
       if (!checkoutUrl) throw new Error('Mercado Pago no devolvió una URL de checkout para esta preferencia.');
 
@@ -375,16 +402,13 @@ app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, re
       ]);
       res.status(201).json({ purchaseId, checkoutUrl });
     } catch (error) {
-      await pool.query(
-        'UPDATE purchases SET status = \$2, updated_at = NOW() WHERE id = \$1',
-        [purchaseId, 'checkout_error']
-      );
+      await pool.query('UPDATE purchases SET status = \$2, updated_at = NOW() WHERE id = \$1', [purchaseId, 'checkout_error']);
       if (error.status === 401 || error.status === 403) {
         const policyCauses = Array.isArray(error.causes)
           ? error.causes.map((cause) => ({
-            code: cause?.code,
-            description: typeof cause?.description === 'string' ? cause.description.slice(0, 300) : undefined
-          }))
+              code: cause?.code,
+              description: typeof cause?.description === 'string' ? cause.description.slice(0, 300) : undefined
+            }))
           : [];
         const providerMessage = typeof error.message === 'string' ? error.message.slice(0, 300) : '';
         const diagnostic = {
@@ -397,8 +421,8 @@ app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, re
 
         const authorizationError = new Error(
           error.status === 401
-            ? 'Mercado Pago rechazó el Access Token (HTTP 401). Comprueba que sea el token de acceso vigente de la aplicación vinculada a la cuenta vendedora y que corresponda al ambiente que estás usando.'
-            : 'Mercado Pago denegó la operación por permisos o políticas de la cuenta (HTTP 403). Comprueba que Checkout Pro esté habilitado para la aplicación y que la cuenta vendedora pueda recibir pagos. Consulta los códigos de diagnóstico que aparecen debajo.'
+            ? 'Mercado Pago rechazó el Access Token (HTTP 401). Comprueba que sea el token de acceso vigente.'
+            : 'Mercado Pago denegó la operación por permisos o políticas de la cuenta (HTTP 403).'
         );
         authorizationError.status = 502;
         authorizationError.cause = error;
@@ -420,10 +444,9 @@ app.get('/api/purchases/:purchaseId', authenticate, async (req, res, next) => {
       [req.params.purchaseId, req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'No se encontró esa compra en tu cuenta.' });
-    const { rows: accountRows } = await pool.query(
-      'SELECT id, email, has_lifetime, credits FROM users WHERE id = \$1',
-      [req.user.id]
-    );
+    const { rows: accountRows } = await pool.query('SELECT id, email, has_lifetime, credits FROM users WHERE id = \$1', [
+      req.user.id
+    ]);
     res.json({ purchase: rows[0], user: accountSnapshot(accountRows[0]) });
   } catch (error) {
     next(error);
@@ -436,10 +459,9 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
     if (!quoteId || quoteId.length > 100) return res.status(400).json({ error: 'La cotización no es válida.' });
 
     const result = await inTransaction(async (client) => {
-      const { rows: users } = await client.query(
-        'SELECT id, has_lifetime, credits FROM users WHERE id = \$1 FOR UPDATE',
-        [req.user.id]
-      );
+      const { rows: users } = await client.query('SELECT id, has_lifetime, credits FROM users WHERE id = \$1 FOR UPDATE', [
+        req.user.id
+      ]);
       const user = users[0];
       if (user.has_lifetime) return { plan: 'vitalicia', credits: Number(user.credits) };
 
@@ -455,10 +477,9 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
         throw error;
       }
 
-      const { rows: updated } = await client.query(
-        'UPDATE users SET credits = credits - 1 WHERE id = \$1 RETURNING credits',
-        [req.user.id]
-      );
+      const { rows: updated } = await client.query('UPDATE users SET credits = credits - 1 WHERE id = \$1 RETURNING credits', [
+        req.user.id
+      ]);
       return { plan: 'creditos', credits: Number(updated[0].credits) };
     });
     res.json(result);
@@ -467,7 +488,7 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
   }
 });
 
-// Ruta para importar el catálogo desde PDF/Fotos usando IA (Lazy Load)
+// Importación de catálogo mediante IA (Gemini API)
 app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async (req, res, next) => {
   try {
     if (!process.env.GEMINI_API_KEY) {
@@ -485,7 +506,7 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
     const mimeType = req.file.mimetype;
 
     const prompt = `Analiza este documento o imagen y extrae la lista de conceptos, productos o servicios con sus precios.
-    Reglas strictly:
+    Reglas estrictas:
     1. Ignora fechas, números de folio, membretes de empresas o textos decorativos.
     2. Agrupa descripciones largas que pertenezcan al mismo producto.
     3. Asigna la unidad adecuada (Servicio, Pieza, Metro, Hora, etc.) y una categoría sugerida.
@@ -501,11 +522,11 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
             {
               inlineData: {
                 data: base64Data,
-                mimeType: mimeType,
-              },
-            },
-          ],
-        },
+                mimeType: mimeType
+              }
+            }
+          ]
+        }
       ],
       config: {
         responseMimeType: 'application/json',
@@ -518,12 +539,12 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
               concepto: { type: Type.STRING, description: 'Nombre o descripción del producto o servicio' },
               unidad: { type: Type.STRING, description: 'Servicio, Pieza, Hora, etc.' },
               categoria: { type: Type.STRING, description: 'Categoría sugerida' },
-              precio: { type: Type.NUMBER, description: 'Precio numérico' },
+              precio: { type: Type.NUMBER, description: 'Precio numérico' }
             },
-            required: ['concepto', 'unidad', 'categoria', 'precio'],
-          },
-        },
-      },
+            required: ['concepto', 'unidad', 'categoria', 'precio']
+          }
+        }
+      }
     });
 
     const conceptos = JSON.parse(response.text);

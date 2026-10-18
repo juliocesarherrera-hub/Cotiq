@@ -5,9 +5,13 @@ export default async function handler(req, res) {
     await initializeServer();
     return app(req, res);
   } catch (error) {
-    console.error('No se pudo inicializar Cotiq API:', error);
+    console.error('No se pudo inicializar la API:', error);
     res.statusCode = 500;
     res.setHeader('Content-Type', 'application/json');
-    return res.end(JSON.stringify({ error: 'No se pudo iniciar la API. Revisa la configuración del servidor.' }));
+    return res.end(
+      JSON.stringify({
+        error: `Error de servidor: ${error.message || 'No se pudo iniciar la API.'}`
+      })
+    );
   }
 }
