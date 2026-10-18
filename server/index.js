@@ -136,12 +136,11 @@ const mpClient = new MercadoPagoConfig({ accessToken, options: { timeout: 10000 
 const preferenceApi = new Preference(mpClient);
 const paymentApi = new Payment(mpClient);
 
-// Configuración de Multer y cliente de IA
+// Configuración de Multer para archivos en memoria
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
 });
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.set('trust proxy', isProduction ? 1 : false);
 app.use(helmet());
@@ -468,18 +467,25 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
   }
 });
 
-// Ruta para importar el catálogo desde PDF/Fotos usando IA
+// Ruta para importar el catálogo desde PDF/Fotos usando IA (Lazy Load)
 app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async (req, res, next) => {
   try {
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({
+        error: 'Falta configurar GEMINI_API_KEY en las variables de entorno del servidor.'
+      });
+    }
+
     if (!req.file) {
       return res.status(400).json({ error: 'No se subió ningún archivo.' });
     }
 
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const base64Data = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype;
 
     const prompt = `Analiza este documento o imagen y extrae la lista de conceptos, productos o servicios con sus precios.
-    Reglas estrictas:
+    Reglas strictly:
     1. Ignora fechas, números de folio, membretes de empresas o textos decorativos.
     2. Agrupa descripciones largas que pertenezcan al mismo producto.
     3. Asigna la unidad adecuada (Servicio, Pieza, Metro, Hora, etc.) y una categoría sugerida.
