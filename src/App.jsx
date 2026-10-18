@@ -33,7 +33,8 @@ import {
   Award,
   Zap,
   WifiOff,
-  Wifi
+  Wifi,
+  ArrowLeft
 } from 'lucide-react';
 import { CATALOG_CATEGORIES, catalogItemsToQuoteLines, suggestCatalogCategory } from './catalog-import.js';
 
@@ -787,6 +788,17 @@ export default function App() {
     notify(`Cotización duplicada como ${cloned.id}`);
   };
 
+  const handleDeleteQuote = (quoteId) => {
+    if (window.confirm(`¿Deseas eliminar permanentemente la cotización ${quoteId}?`)) {
+      const updated = quotes.filter((q) => q.id !== quoteId);
+      saveQuotesList(updated);
+      if (pendingOfflineQuotes.some(p => p.id === quoteId)) {
+        savePendingOfflineQuotes(pendingOfflineQuotes.filter(p => p.id !== quoteId));
+      }
+      notify(`Cotización ${quoteId} eliminada`);
+    }
+  };
+
   const handleConvertType = () => {
     const nextType = activeQuote.type === 'Cotización' ? 'Recibo de Anticipo' : 'Cotización';
     const nextStatus = nextType === 'Recibo de Anticipo' ? 'Aprobado' : activeQuote.status;
@@ -883,12 +895,12 @@ export default function App() {
     if (!canvas) return;
     const dataUrl = canvas.toDataURL('image/png');
     if (signatureTarget === 'client') {
-      setActiveQuote({ ...activeQuote, signatureClient: dataUrl });
+      setActiveQuote({ ...activeQuote, signatureClient: dataUrl, status: 'Aprobado' });
     } else {
       setActiveQuote({ ...activeQuote, signatureIssuer: dataUrl });
     }
     setShowSignatureModal(false);
-    notify('Firma guardada');
+    notify('Firma guardada con éxito');
   };
 
   const toggleVoice = () => {
@@ -934,12 +946,16 @@ export default function App() {
 
   const totalCotizadoSum = (quotes || []).reduce((acc, q) => {
     const sub = (q?.items || []).reduce((s, i) => s + (Number(i?.quantity||0) * Number(i?.unitPrice||0)), 0);
-    return acc + sub + (q?.includeIVA ? sub * 0.16 : 0);
+    const disc = (sub * (Number(q?.discount) || 0)) / 100;
+    const net = sub - disc;
+    return acc + net + (q?.includeIVA ? net * 0.16 : 0);
   }, 0);
 
   const totalAprobadoSum = (quotes || []).filter(q => q?.status === 'Aprobado').reduce((acc, q) => {
     const sub = (q?.items || []).reduce((s, i) => s + (Number(i?.quantity||0) * Number(i?.unitPrice||0)), 0);
-    return acc + sub + (q?.includeIVA ? sub * 0.16 : 0);
+    const disc = (sub * (Number(q?.discount) || 0)) / 100;
+    const net = sub - disc;
+    return acc + net + (q?.includeIVA ? net * 0.16 : 0);
   }, 0);
 
   const handleWhatsApp = () => {
@@ -953,6 +969,7 @@ export default function App() {
       `-----------------------------------\n` +
       `${itemsFormatted}\n` +
       `-----------------------------------\n` +
+      `${Number(activeQuote.discount) > 0 ? `Subtotal bruto: $${grossSubtotal.toLocaleString('es-MX', {minimumFractionDigits: 2})}\nDescuento (${activeQuote.discount}%): -$${discountVal.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n` : ''}` +
       `Subtotal: $${netSubtotal.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n` +
       `${activeQuote.includeIVA ? `IVA (16%): $${ivaVal.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n` : ''}` +
       `💰 *TOTAL: $${totalVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} MXN*\n` +
@@ -1114,7 +1131,7 @@ export default function App() {
                     key={st}
                     onClick={() => setStatusFilter(st)}
                     className={`cotiq-filter px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-all ${
-                      statusFilter === st ? 'is-active' : ''
+                      statusFilter === st ? 'is-active bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-900 text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     {st}
@@ -1124,14 +1141,14 @@ export default function App() {
             </div>
 
             {(quotes || []).length === 0 ? (
-              <div className="cotiq-empty-state grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] overflow-hidden rounded-2xl">
+              <div className="cotiq-empty-state grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] overflow-hidden rounded-2xl bg-slate-900/40 border border-slate-800">
                 <section className="cotiq-empty-main flex flex-col justify-center p-7 sm:p-10">
-                  <div className="cotiq-empty-icon flex items-center justify-center rounded-2xl">
+                  <div className="cotiq-empty-icon w-12 h-12 bg-emerald-500/10 text-emerald-400 flex items-center justify-center rounded-2xl border border-emerald-500/20">
                     <FileText className="w-7 h-7" />
                   </div>
                   <h2 className="mt-5 text-xl sm:text-2xl font-bold tracking-tight text-slate-100">Tu próxima cotización empieza aquí</h2>
                   <p className="mt-2 max-w-lg text-sm leading-6 text-slate-400">
-                    Reúne partidas, precios y condiciones en una propuesta clara para tu cliente. Puedes guardarla y compartirla como PDF.
+                    Reúne partidas, precios y condiciones en una propuesta clara para tu cliente. Puedes guardarla y compartirla como PDF o enlace interactivo.
                   </p>
                   <div className="mt-6">
                     <button
@@ -1142,28 +1159,28 @@ export default function App() {
                     </button>
                   </div>
                 </section>
-                <aside className="cotiq-empty-guide p-7 sm:p-8">
+                <aside className="cotiq-empty-guide p-7 sm:p-8 bg-slate-950/60 border-t lg:border-t-0 lg:border-l border-slate-800">
                   <h3 className="text-sm font-semibold text-slate-100">Un flujo sencillo para cotizar</h3>
                   <ol className="mt-5 space-y-5">
                     <li className="flex gap-3">
-                      <span className="cotiq-step-number">1</span>
+                      <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs flex items-center justify-center shrink-0">1</span>
                       <div>
                         <p className="text-sm font-semibold text-slate-200">Elige a tu cliente</p>
                         <p className="mt-0.5 text-xs leading-5 text-slate-400">Selecciona uno guardado o agrega sus datos al crear la cotización.</p>
                       </div>
                     </li>
                     <li className="flex gap-3">
-                      <span className="cotiq-step-number">2</span>
+                      <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs flex items-center justify-center shrink-0">2</span>
                       <div>
                         <p className="text-sm font-semibold text-slate-200">Agrega servicios y precios</p>
                         <p className="mt-0.5 text-xs leading-5 text-slate-400">Usa tu catálogo, dicta conceptos o captura las partidas manualmente.</p>
                       </div>
                     </li>
                     <li className="flex gap-3">
-                      <span className="cotiq-step-number">3</span>
+                      <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs flex items-center justify-center shrink-0">3</span>
                       <div>
                         <p className="text-sm font-semibold text-slate-200">Revisa y comparte</p>
-                        <p className="mt-0.5 text-xs leading-5 text-slate-400">Prepara el PDF y envíalo a tu cliente cuando esté listo.</p>
+                        <p className="mt-0.5 text-xs leading-5 text-slate-400">Prepara el PDF y envíalo a tu cliente por WhatsApp o web.</p>
                       </div>
                     </li>
                   </ol>
@@ -1173,61 +1190,75 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {(quotes || [])
                   .filter(q => statusFilter === 'todos' || q?.status === statusFilter)
-                  .map((q) => (
-                    <div key={q.id} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-start gap-3 hover:border-slate-700 transition-colors">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-sm text-slate-100">{q.id}</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                            q?.status === 'Aprobado' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'
-                          }`}>
-                            {q?.type || 'Cotización'} • {q?.status || 'Borrador'}
-                          </span>
-                          {pendingOfflineQuotes.some((entry) => entry.id === q.id) && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-500/10 text-amber-300">
-                              Crédito pendiente
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-200 font-medium">{q?.clientName || 'Cliente sin nombre'}</p>
-                        <p className="text-[11px] text-slate-500">{q?.date}</p>
-                      </div>
+                  .map((q) => {
+                    const sub = (q?.items || []).reduce((acc, i) => acc + (Number(i?.quantity||0) * Number(i?.unitPrice||0)), 0);
+                    const disc = (sub * (Number(q?.discount) || 0)) / 100;
+                    const net = sub - disc;
+                    const tot = net + (q?.includeIVA ? net * 0.16 : 0);
 
-                      <div className="text-right space-y-2">
-                        <p className="text-sm font-bold text-slate-100">
-                          ${(q?.items || []).reduce((acc, i) => acc + (Number(i?.quantity||0) * Number(i?.unitPrice||0)), 0).toLocaleString('es-MX')}
-                        </p>
-                        <div className="flex gap-1 justify-end">
-                          <button
-                            onClick={() => handleDuplicateQuote(q)}
-                            title="Duplicar"
-                            className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-1.5 rounded-lg text-xs"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => { setActiveQuote(q); setViewMode('editor'); }}
-                            className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1 rounded-lg text-xs font-semibold"
-                          >
-                            Editar
-                          </button>
-                          <button
-                            onClick={() => { setActiveQuote(q); setViewMode('client_web'); }}
-                            title="Ver Link del Cliente"
-                            className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1"
-                          >
-                            <ExternalLink className="w-3 h-3" /> Web
-                          </button>
-                          <button
-                            onClick={() => { setActiveQuote(q); setViewMode('preview'); }}
-                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded-lg text-xs font-semibold"
-                          >
-                            PDF
-                          </button>
+                    return (
+                      <div key={q.id} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-start gap-3 hover:border-slate-700 transition-colors">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-slate-100">{q.id}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                              q?.status === 'Aprobado' ? 'bg-emerald-500/20 text-emerald-400' : q?.status === 'Enviado' ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-400'
+                            }`}>
+                              {q?.type || 'Cotización'} • {q?.status || 'Borrador'}
+                            </span>
+                            {pendingOfflineQuotes.some((entry) => entry.id === q.id) && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-500/10 text-amber-300">
+                                Crédito pendiente
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-200 font-medium">{q?.clientName || 'Cliente sin nombre'}</p>
+                          <p className="text-[11px] text-slate-500">{q?.date}</p>
+                        </div>
+
+                        <div className="text-right space-y-2">
+                          <p className="text-sm font-bold text-slate-100">
+                            ${tot.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                          </p>
+                          <div className="flex gap-1 justify-end flex-wrap">
+                            <button
+                              onClick={() => handleDuplicateQuote(q)}
+                              title="Duplicar"
+                              className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-1.5 rounded-lg text-xs"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => { setActiveQuote(q); setViewMode('editor'); }}
+                              className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => { setActiveQuote(q); setViewMode('client_web'); }}
+                              title="Ver Link del Cliente"
+                              className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1"
+                            >
+                              <ExternalLink className="w-3 h-3" /> Web
+                            </button>
+                            <button
+                              onClick={() => { setActiveQuote(q); setViewMode('preview'); }}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded-lg text-xs font-semibold"
+                            >
+                              PDF
+                            </button>
+                            <button
+                              onClick={() => handleDeleteQuote(q.id)}
+                              title="Eliminar"
+                              className="bg-slate-800 hover:bg-rose-900/50 text-slate-400 hover:text-rose-300 p-1.5 rounded-lg text-xs transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
             )}
 
@@ -1239,15 +1270,34 @@ export default function App() {
           <div className="space-y-6">
             
             <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-4 gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-base font-bold text-slate-100">Editor de {activeQuote.type}</h1>
-                  <span className="text-xs text-slate-400 font-mono">({activeQuote.id})</span>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setViewMode('list')}
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-2 rounded-xl text-xs font-semibold flex items-center gap-1"
+                  title="Volver a la lista"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-base font-bold text-slate-100">Editor de {activeQuote.type}</h1>
+                    <span className="text-xs text-slate-400 font-mono">({activeQuote.id})</span>
+                  </div>
+                  <p className="text-xs text-slate-400">Ingresa o autocompleta los datos del proyecto.</p>
                 </div>
-                <p className="text-xs text-slate-400">Ingresa o autocompleta los datos del proyecto.</p>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 items-center">
+                <select
+                  value={activeQuote.status || 'Borrador'}
+                  onChange={(e) => setActiveQuote({ ...activeQuote, status: e.target.value })}
+                  className="bg-slate-900 border border-slate-800 text-xs rounded-xl px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-slate-600 font-semibold"
+                >
+                  <option value="Borrador">Borrador</option>
+                  <option value="Enviado">Enviado</option>
+                  <option value="Aprobado">Aprobado</option>
+                </select>
+
                 <button
                   onClick={() => setShowCalculator(!showCalculator)}
                   className={`px-3 py-1.5 text-xs rounded-xl font-semibold flex items-center gap-1.5 border transition-all ${
@@ -1571,11 +1621,11 @@ export default function App() {
                     </span>
                   </button>
                   <button
-                  onClick={() => setActiveQuote({
-                    ...activeQuote,
-                    items: [...(activeQuote.items || []), { id: Date.now(), quantity: 1, unit: 'Servicio', description: '', unitPrice: '' }]
-                  })}
-                  className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-bold"
+                    onClick={() => setActiveQuote({
+                      ...activeQuote,
+                      items: [...(activeQuote.items || []), { id: Date.now(), quantity: 1, unit: 'Servicio', description: '', unitPrice: '' }]
+                    })}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-bold"
                   >
                     <Plus className="w-3.5 h-3.5" /> Agregar Partida
                   </button>
@@ -1744,13 +1794,22 @@ export default function App() {
 
             {/* Resumen */}
             <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-900/30 border border-slate-800 rounded-2xl text-xs">
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-4">
                 <div>
                   <span className="text-slate-400 block text-[10px]">Anticipo Requerido (%)</span>
                   <input 
                     type="number"
                     value={activeQuote.advancePercent}
                     onChange={(e) => setActiveQuote({ ...activeQuote, advancePercent: e.target.value })}
+                    className="w-20 bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Descuento (%)</span>
+                  <input 
+                    type="number"
+                    value={activeQuote.discount || '0'}
+                    onChange={(e) => setActiveQuote({ ...activeQuote, discount: e.target.value })}
                     className="w-20 bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-slate-100 focus:outline-none"
                   />
                 </div>
@@ -1786,9 +1845,9 @@ export default function App() {
               </span>
               <button
                 onClick={() => setViewMode('editor')}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl font-semibold"
+                className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl font-semibold flex items-center gap-1"
               >
-                Volver al Editor
+                <ArrowLeft className="w-3.5 h-3.5" /> Volver al Editor
               </button>
             </div>
 
@@ -1810,6 +1869,8 @@ export default function App() {
                 <span className="text-[10px] text-slate-500 uppercase font-bold">Cliente:</span>
                 <p className="font-bold text-slate-200">{activeQuote.clientName || 'Cliente'}</p>
                 {activeQuote.projectLocation && <p className="text-slate-400">Ubicación: {activeQuote.projectLocation}</p>}
+                {activeQuote.executionDays && <p className="text-slate-400">Plazo de ejecución: {activeQuote.executionDays}</p>}
+                {activeQuote.warrantyInfo && <p className="text-emerald-400 font-medium">Garantía: {activeQuote.warrantyInfo}</p>}
               </div>
 
               <div className="space-y-2">
@@ -1827,6 +1888,20 @@ export default function App() {
                 </div>
               </div>
 
+              {activeQuote.scope && (
+                <div className="space-y-1 text-xs">
+                  <span className="font-bold text-slate-300">Alcance del Trabajo:</span>
+                  <p className="text-slate-400 bg-slate-950 p-3 rounded-xl border border-slate-800">{activeQuote.scope}</p>
+                </div>
+              )}
+
+              {activeQuote.exclusions && (
+                <div className="space-y-1 text-xs">
+                  <span className="font-bold text-rose-300">Exclusiones:</span>
+                  <p className="text-slate-400 bg-slate-950 p-3 rounded-xl border border-rose-950/40">{activeQuote.exclusions}</p>
+                </div>
+              )}
+
               <div className="bg-emerald-950/30 border border-emerald-500/30 p-4 rounded-2xl flex justify-between items-center text-xs">
                 <div>
                   <span className="text-slate-400 block">Anticipo Requerido ({activeQuote.advancePercent}%)</span>
@@ -1838,13 +1913,42 @@ export default function App() {
                 </div>
               </div>
 
+              {company.clabe && (
+                <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs space-y-2">
+                  <span className="font-bold text-slate-200 block">💳 Transferencia Interbancaria (SPEI):</span>
+                  {company.bankHolder && <p className="text-slate-400">Titular: {company.bankHolder}</p>}
+                  <p className="font-mono text-emerald-400 font-bold">{company.bank ? `${company.bank} • ` : ''}CLABE: {company.clabe}</p>
+                  {qrUrl && <img src={qrUrl} alt="QR SPEI" className="w-24 h-24 rounded border border-slate-800 mt-2" />}
+                </div>
+              )}
+
+              {(activeQuote.photos || []).length > 0 && (
+                <div className="space-y-2">
+                  <span className="text-xs font-bold text-slate-300">Anexo Fotográfico de Obra:</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {activeQuote.photos.map((p, idx) => (
+                      <img key={idx} src={p} alt="Foto de obra" className="rounded-xl border border-slate-800 object-cover aspect-square" />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-3 pt-2">
-                <button
-                  onClick={() => openSignatureModal('client')}
-                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
-                >
-                  <PenTool className="w-4 h-4" /> Firmar en Pantalla y Aceptar Cotización
-                </button>
+                {activeQuote.signatureClient ? (
+                  <div className="bg-slate-950 p-4 rounded-2xl border border-emerald-500/30 text-center space-y-2">
+                    <span className="text-emerald-400 font-bold text-xs flex items-center justify-center gap-1">
+                      <Check className="w-4 h-4" /> Cotización Aprobada y Firmada
+                    </span>
+                    <img src={activeQuote.signatureClient} alt="Firma Cliente" className="h-16 mx-auto object-contain bg-white rounded p-1" />
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => openSignatureModal('client')}
+                    className="w-full bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                  >
+                    <PenTool className="w-4 h-4" /> Firmar en Pantalla y Aceptar Cotización
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1857,6 +1961,12 @@ export default function App() {
             <div className="print:hidden flex items-center justify-between bg-slate-900 p-3 rounded-2xl border border-slate-800 text-xs">
               <span className="text-slate-400 font-medium">Documento Formal A4 Membretado Pro</span>
               <div className="flex gap-2">
+                <button
+                  onClick={() => setViewMode('editor')}
+                  className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-xl transition-colors flex items-center gap-1.5"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Volver al Editor
+                </button>
                 <button
                   onClick={() => window.print()}
                   className="px-3.5 py-1.5 bg-slate-100 hover:bg-white text-slate-950 font-bold rounded-xl transition-colors flex items-center gap-1.5"
@@ -1911,12 +2021,14 @@ export default function App() {
                   {activeQuote.clientContact && <p className="text-slate-600">At'n: {activeQuote.clientContact}</p>}
                   {activeQuote.clientPhone && <p className="text-slate-600">Teléfono: {activeQuote.clientPhone}</p>}
                   {activeQuote.clientEmail && <p className="text-slate-600">Email: {activeQuote.clientEmail}</p>}
+                  {activeQuote.clientRfc && <p className="text-slate-600 font-mono">RFC: {activeQuote.clientRfc}</p>}
                 </div>
                 <div className="text-right space-y-1">
                   <span className="font-bold text-slate-700 block mb-1 uppercase tracking-wider text-[10px]">Ubicación y Condiciones:</span>
                   <p className="text-slate-700 font-medium">{activeQuote.projectLocation || 'En sitio'}</p>
                   {activeQuote.executionDays && <p className="text-[11px] text-slate-600 font-semibold pt-1">⏱️ Plazo: {activeQuote.executionDays}</p>}
                   {activeQuote.warrantyInfo && <p className="text-[11px] text-emerald-700 font-semibold">🛡️ Garantía: {activeQuote.warrantyInfo}</p>}
+                  {activeQuote.paymentMilestones && <p className="text-[10px] text-slate-500">💳 Pagos: {activeQuote.paymentMilestones}</p>}
                 </div>
               </div>
 
@@ -1943,7 +2055,7 @@ export default function App() {
                 </tbody>
               </table>
 
-              <div className="grid grid-cols-12 gap-4 items-start mb-8 text-xs">
+              <div className="grid grid-cols-12 gap-4 items-start mb-6 text-xs">
                 <div className="col-span-7 space-y-2 text-slate-600">
                   {company.clabe && (
                     <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex items-center justify-between gap-3">
@@ -1964,13 +2076,44 @@ export default function App() {
                       )}
                     </div>
                   )}
+
+                  {activeQuote.scope && (
+                    <div className="text-[11px] pt-1">
+                      <span className="font-bold text-slate-800 block">Alcance del trabajo:</span>
+                      <p className="text-slate-600 leading-snug">{activeQuote.scope}</p>
+                    </div>
+                  )}
+
+                  {activeQuote.exclusions && (
+                    <div className="text-[11px] pt-1">
+                      <span className="font-bold text-rose-800 block">Exclusiones:</span>
+                      <p className="text-slate-600 leading-snug">{activeQuote.exclusions}</p>
+                    </div>
+                  )}
+
+                  {company.defaultTerms && (
+                    <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-200">
+                      <span className="font-bold block">Términos Generales:</span>
+                      <p>{company.defaultTerms}</p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="col-span-5">
                   <table className="w-full text-xs border border-slate-300">
                     <tbody>
                       <tr className="border-b border-slate-200">
-                        <td className="p-1.5 font-bold bg-slate-50 border-r border-slate-200">Subtotal</td>
+                        <td className="p-1.5 font-bold bg-slate-50 border-r border-slate-200">Subtotal Bruto</td>
+                        <td className="p-1.5 text-right font-medium">${grossSubtotal.toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                      </tr>
+                      {Number(activeQuote.discount) > 0 && (
+                        <tr className="border-b border-slate-200 text-rose-700">
+                          <td className="p-1.5 font-bold bg-slate-50 border-r border-slate-200">Descuento ({activeQuote.discount}%)</td>
+                          <td className="p-1.5 text-right font-medium">-${discountVal.toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                        </tr>
+                      )}
+                      <tr className="border-b border-slate-200">
+                        <td className="p-1.5 font-bold bg-slate-50 border-r border-slate-200">Subtotal Neto</td>
                         <td className="p-1.5 text-right font-medium">${netSubtotal.toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
                       </tr>
                       {activeQuote.includeIVA && (
@@ -1983,8 +2126,45 @@ export default function App() {
                         <td className="p-1.5 border-r border-slate-300">TOTAL</td>
                         <td className="p-1.5 text-right text-slate-900">${totalVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} MXN</td>
                       </tr>
+                      <tr className="bg-emerald-50 text-emerald-900 font-bold border-t border-slate-300">
+                        <td className="p-1.5 border-r border-slate-300">Anticipo ({activeQuote.advancePercent}%)</td>
+                        <td className="p-1.5 text-right">${advanceVal.toLocaleString('es-MX', {minimumFractionDigits: 2})} MXN</td>
+                      </tr>
                     </tbody>
                   </table>
+                </div>
+              </div>
+
+              {(activeQuote.photos || []).length > 0 && (
+                <div className="mb-6 pt-4 border-t border-slate-200 break-inside-avoid">
+                  <span className="font-bold text-xs text-slate-800 uppercase tracking-wider block mb-2">Anexo Fotográfico de Obra</span>
+                  <div className="grid grid-cols-4 gap-2">
+                    {activeQuote.photos.map((p, idx) => (
+                      <img key={idx} src={p} alt={`Evidencia ${idx+1}`} className="w-full h-24 object-cover rounded border border-slate-300" />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-8 pt-8 border-t border-slate-300 text-center text-xs break-inside-avoid">
+                <div>
+                  {activeQuote.signatureIssuer ? (
+                    <img src={activeQuote.signatureIssuer} alt="Firma Emisor" className="h-16 mx-auto object-contain mb-1" />
+                  ) : (
+                    <div className="h-16 border-b border-dashed border-slate-400 mb-1" />
+                  )}
+                  <p className="font-bold text-slate-800">{company.name || 'EMISOR / CONTRATISTA'}</p>
+                  <p className="text-[10px] text-slate-500">Firma Autorizada</p>
+                </div>
+
+                <div>
+                  {activeQuote.signatureClient ? (
+                    <img src={activeQuote.signatureClient} alt="Firma Cliente" className="h-16 mx-auto object-contain mb-1" />
+                  ) : (
+                    <div className="h-16 border-b border-dashed border-slate-400 mb-1" />
+                  )}
+                  <p className="font-bold text-slate-800">{activeQuote.clientName || 'CLIENTE'}</p>
+                  <p className="text-[10px] text-slate-500">Firma de Conformidad</p>
                 </div>
               </div>
 
@@ -2050,6 +2230,7 @@ export default function App() {
                           const updated = (clients || []).filter(x => x.id !== c.id);
                           setClients(updated);
                           localStorage.setItem('cotiq_clients', JSON.stringify(updated));
+                          notify('Cliente eliminado');
                         }}
                         className="text-slate-500 hover:text-rose-400 p-1.5"
                       >
@@ -2349,6 +2530,7 @@ export default function App() {
                           const updated = (catalog || []).filter(x => x.id !== cat.id);
                           setCatalog(updated);
                           localStorage.setItem('cotiq_catalog', JSON.stringify(updated));
+                          notify('Concepto eliminado');
                         }}
                         className="text-slate-500 hover:text-rose-400 p-1"
                       >
