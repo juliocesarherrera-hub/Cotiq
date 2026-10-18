@@ -506,15 +506,22 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
     const base64Data = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype || 'image/jpeg';
 
-    const prompt = `Analiza este documento o imagen y extrae la lista de conceptos, productos o servicios con sus precios.
-    Reglas estrictas:
-    1. Ignora fechas, números de folio, membretes de empresas o textos decorativos.
-    2. Agrupa descripciones largas que pertenezcan al mismo producto.
-    3. Asigna la unidad adecuada (Servicio, Pieza, Metro, Hora, etc.) y una categoría sugerida.
-    4. Devuelve únicamente números válidos para los precios.`;
+    const prompt = `Analiza este documento o imagen y extrae la lista de conceptos, productos o servicios con sus PRECIOS UNITARIOS.
+
+    REGLAS ESTRICATAS DE LECTURA DE PRECIOS:
+    1. EXTRACCIÓN DE PRECIO UNITARIO:
+       - En tablas con columnas de "Cantidad", "Descripción", "Valor unitario" y "Precio/Total", toma SIEMPRE la columna del "Valor unitario".
+    2. CONVENCIÓN DE SEPARADORES (MILES VS DECIMALES):
+       - En cotizaciones en español de Latinoamérica, el punto (.) actúa como separador de miles ($35.000 = 35000).
+       - Comprueba la matemática (Cantidad × Valor Unitario = Precio Total) para verificar que la cifra corresponda a miles.
+       - Devuelve el precio como un NÚMERO PURO de JavaScript (sin $, sin puntos de miles).
+       - Ejemplo: "$35.000" debe ser 35000. "$1.350.000" debe ser 1350000.
+    3. EXCLUSIONES:
+       - Ignora encabezados, fechas, números de teléfono, direcciones, SUBTOTAL, IVA y TOTAL final.
+       - Asigna la unidad adecuada (Pieza, Servicio, etc.) y una categoría sugerida.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents: [
         {
           role: 'user',
@@ -540,7 +547,7 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
               concepto: { type: Type.STRING, description: 'Nombre o descripción del producto o servicio' },
               unidad: { type: Type.STRING, description: 'Servicio, Pieza, Hora, etc.' },
               categoria: { type: Type.STRING, description: 'Categoría sugerida' },
-              precio: { type: Type.NUMBER, description: 'Precio numérico' }
+              precio: { type: Type.NUMBER, description: 'Precio unitario como número entero puro' }
             },
             required: ['concepto', 'unidad', 'categoria', 'precio']
           }
