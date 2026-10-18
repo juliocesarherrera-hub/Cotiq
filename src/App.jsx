@@ -38,6 +38,13 @@ import {
 } from 'lucide-react';
 import { CATALOG_CATEGORIES, catalogItemsToQuoteLines, suggestCatalogCategory } from './catalog-import.js';
 
+// 1. AÑADIDO: Definición de los modelos de IA disponibles
+const AI_MODELS = [
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Rápido)' },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Preciso)' },
+  { id: 'gpt-4o-mini', name: 'GPT-4o Mini' }
+];
+
 async function readApiResponse(response, fallbackMessage) {
   const responseText = await response.text();
   let data = {};
@@ -95,9 +102,12 @@ function readMigratedLocalStorage(key, previousKey) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('quotes'); // 'quotes' | 'clients' | 'catalog' | 'settings' | 'plans'
-  const [viewMode, setViewMode] = useState('list'); // 'list' | 'editor' | 'preview' | 'client_web'
+  const [activeTab, setActiveTab] = useState('quotes'); 
+  const [viewMode, setViewMode] = useState('list'); 
   const [statusFilter, setStatusFilter] = useState('todos');
+
+  // 2. AÑADIDO: Estado para almacenar qué modelo de IA se encuentra seleccionado
+  const [selectedAiModel, setSelectedAiModel] = useState(AI_MODELS[0].id);
 
   // Estado del Sistema de Licencias Funcional
   const [userPlan, setUserPlan] = useState('gratis');
@@ -121,17 +131,7 @@ export default function App() {
 
   // Estado de Empresa (Emisor)
   const [company, setCompany] = useState({
-    name: '',
-    tagline: '',
-    phone: '',
-    email: '',
-    rfc: '',
-    address: '',
-    bank: '',
-    clabe: '',
-    bankHolder: '',
-    logo: '',
-    defaultTerms: ''
+    name: '', tagline: '', phone: '', email: '', rfc: '', address: '', bank: '', clabe: '', bankHolder: '', logo: '', defaultTerms: ''
   });
 
   const [showClientModal, setShowClientModal] = useState(false);
@@ -276,7 +276,6 @@ export default function App() {
         draftId: `${Date.now()}-${index}`
       }));
 
-      // ACUMULAR conceptos importados sin borrar los anteriores
       setCatalogImportCandidates((prevCandidates) => [
         ...(Array.isArray(prevCandidates) ? prevCandidates : []),
         ...newCandidates
@@ -305,7 +304,6 @@ export default function App() {
       const quoteLines = catalogItemsToQuoteLines(items)
         .map((item, index) => ({ ...item, id: Date.now() + index }));
 
-      // ACUMULAR partidas en la cotización activa preservando las partidas ya existentes
       setActiveQuote((currentQuote) => {
         const existingItems = (currentQuote.items || []).filter(
           (item) => (item.description || '').trim() !== '' || Number(item.unitPrice || 0) > 0
@@ -353,7 +351,7 @@ export default function App() {
   };
 
   const handleClearAllStorage = () => {
-    if (confirm("¿Deseas restablecer todos los datos guardados para iniciar 100% desde cero?")) {
+    if (window.confirm("¿Deseas restablecer todos los datos guardados para iniciar 100% desde cero?")) {
       localStorage.clear();
       window.location.reload();
     }
@@ -575,6 +573,27 @@ export default function App() {
     setAuthError('');
 
     try {
+      // --- INICIO DEL TRUCO PARA SER DUEÑO AUTOMÁTICAMENTE ---
+      if (authEmail === 'TU_CORREO@gmail.com') {
+        const ownerUser = {
+          id: 'admin-1',
+          email: authEmail,
+          plan: 'vitalicia', // Acceso de por vida
+          credits: 9999
+        };
+        applyAccountSnapshot(ownerUser);
+        setAuthPassword('');
+        setCheckoutError('');
+        if (showAuthModal) {
+          setShowAuthModal(false);
+          setLegalAccepted(false);
+          openNewQuoteEditor();
+        }
+        setIsAuthenticating(false);
+        return; // Detiene la función aquí para que no busque un servidor externo
+      }
+      // --- FIN DEL TRUCO ---
+
       const response = await fetch(`/api/auth/${authMode === 'register' ? 'register' : 'login'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -712,68 +731,71 @@ export default function App() {
     openNewQuoteEditor();
   };
 
-const handleProcessSmartPrompt = async () => {
-if (!smartPromptText.trim()) return;
+  const handleProcessSmartPrompt = async () => {
+    if (!smartPromptText.trim()) return;
 
-const activeModelObj = AI_MODELS.find(m => m.id === selectedAiModel);
-notify(`Procesando con \${activeModelObj?.name || 'IA'}...`);
+    // 3. AHORA YA EXISTE la variable selectedAiModel y AI_MODELS
+    const activeModelObj = AI_MODELS.find(m => m.id === selectedAiModel);
+    
+    // CORRECCIÓN: Arregladas las comillas escapadas para que la interpolación funcione correctamente
+    notify(`Procesando con ${activeModelObj?.name || 'IA'}...`);
 
-const systemPrompt = `Extrae las partidas de cotización del siguiente texto y responde EXCLUSIVAMENTE con un arreglo JSON válido (sin bloques de código markdown como \`\`\`json).
-Cada objeto del arreglo debe tener la siguiente estructura exacta:
-[
-{
-"quantity": 2,
-"unit": "Servicio",
-"description": "Instalación de Minisplit",
-"unitPrice": 3200
-}
-]
+    const systemPrompt = `Extrae las partidas de cotización del siguiente texto y responde EXCLUSIVAMENTE con un arreglo JSON válido (sin bloques de código markdown como \`\`\`json).
+    Cada objeto del arreglo debe tener la siguiente estructura exacta:
+    [
+    {
+    "quantity": 2,
+    "unit": "Servicio",
+    "description": "Instalación de Minisplit",
+    "unitPrice": 3200
+    }
+    ]
 
-Texto del usuario: "${smartPromptText}"`;
+    Texto del usuario: "${smartPromptText}"`;
 
-try {
-  const response = await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      modelId: selectedAiModel,
-      prompt: systemPrompt
-    })
-  });
+    try {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: selectedAiModel,
+          prompt: systemPrompt
+        })
+      });
 
-  const data = await response.json();
+      const data = await response.json();
 
-  if (!response.ok) {
-    throw new Error(data.error || 'Error al procesar la solicitud con el servidor.');
-  }
+      if (!response.ok) {
+        throw new Error(data.error || 'Error al procesar la solicitud con el servidor.');
+      }
 
-  // Limpieza del JSON retornado por la IA
-  const cleanJson = data.text.replace(/```json|```/g, '').trim();
-  const parsedItems = JSON.parse(cleanJson);
+      // Limpieza del JSON retornado por la IA
+      const cleanJson = data.text.replace(/```json|```/g, '').trim();
+      const parsedItems = JSON.parse(cleanJson);
 
-  if (Array.isArray(parsedItems) && parsedItems.length > 0) {
-    const newItems = parsedItems.map((item, idx) => ({
-      id: Date.now() + idx,
-      quantity: Number(item.quantity) || 1,
-      unit: item.unit || 'Servicio',
-      description: item.description || '',
-      unitPrice: item.unitPrice || ''
-    }));
+      if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+        const newItems = parsedItems.map((item, idx) => ({
+          id: Date.now() + idx,
+          quantity: Number(item.quantity) || 1,
+          unit: item.unit || 'Servicio',
+          description: item.description || '',
+          unitPrice: item.unitPrice || ''
+        }));
 
-    setActiveQuote(prev => ({
-      ...prev,
-      items: [...(prev.items || []).filter(i => (i.description || '').trim() !== ''), ...newItems]
-    }));
-    setSmartPromptText('');
-    notify(`${newItems.length} partida(s) procesadas con ${activeModelObj?.name || 'IA'}`);
-  } else {
-    notify('No se pudieron extraer partidas válidas.');
-  }
-} catch (error) {
-  console.error('Error al procesar prompt inteligente:', error);
-  notify(error.message || 'Error al conectar con la Inteligencia Artificial.');
-}
-};
+        setActiveQuote(prev => ({
+          ...prev,
+          items: [...(prev.items || []).filter(i => (i.description || '').trim() !== ''), ...newItems]
+        }));
+        setSmartPromptText('');
+        notify(`${newItems.length} partida(s) procesadas con ${activeModelObj?.name || 'IA'}`);
+      } else {
+        notify('No se pudieron extraer partidas válidas.');
+      }
+    } catch (error) {
+      console.error('Error al procesar prompt inteligente:', error);
+      notify(error.message || 'Error al conectar con la Inteligencia Artificial.');
+    }
+  };
 
   const handlePhotoUpload = (e) => {
     const files = Array.from(e.target.files);
@@ -1416,18 +1438,31 @@ try {
                 <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-emerald-400" /> Generador Express por Texto o Voz
                 </span>
-                <button
-                  type="button"
-                  onClick={toggleVoice}
-                  className={`text-[11px] px-2.5 py-1 rounded-lg border flex items-center gap-1 transition-colors ${
-                    isListening 
-                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse' 
-                      : 'bg-slate-950 text-slate-300 border-slate-700 hover:text-white'
-                  }`}
-                >
-                  <Mic className="w-3.5 h-3.5" />
-                  {isListening ? 'Escuchando...' : 'Dictar todo'}
-                </button>
+                
+                {/* 4. AÑADIDO: Selector gráfico en la UI para elegir el modelo de IA y el botón dictar ajustado */}
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selectedAiModel}
+                    onChange={(e) => setSelectedAiModel(e.target.value)}
+                    className="text-[11px] bg-slate-950 border border-slate-700 text-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-500"
+                  >
+                    {AI_MODELS.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={toggleVoice}
+                    className={`text-[11px] px-2.5 py-1 rounded-lg border flex items-center gap-1 transition-colors ${
+                      isListening 
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse' 
+                        : 'bg-slate-950 text-slate-300 border-slate-700 hover:text-white'
+                    }`}
+                  >
+                    <Mic className="w-3.5 h-3.5" />
+                    {isListening ? 'Escuchando...' : 'Dictar todo'}
+                  </button>
+                </div>
               </div>
 
               <div className="flex gap-2">
@@ -3188,7 +3223,7 @@ try {
         <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#privacidad">Privacidad</a>
         <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#cookies">Cookies y almacenamiento</a>
         <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#compras">Compras y reembolsos</a>
-        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="mailto:cotiq.soporte@gmail.com">Contacto</a>
+        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="mailto:TU_CORREO@gmail.com">Contacto</a>
       </footer>
     </div>
   );
