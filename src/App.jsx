@@ -271,10 +271,17 @@ export default function App() {
     try {
       const { importCatalogFile } = await import('./catalog-file-reader.js');
       const items = await importCatalogFile(file, setCatalogImportProgress);
-      setCatalogImportCandidates(items.map((item, index) => ({
+      const newCandidates = items.map((item, index) => ({
         ...item,
         draftId: `${Date.now()}-${index}`
-      })));
+      }));
+
+      // ACUMULAR conceptos importados sin borrar los anteriores
+      setCatalogImportCandidates((prevCandidates) => [
+        ...(Array.isArray(prevCandidates) ? prevCandidates : []),
+        ...newCandidates
+      ]);
+      notify(`Se reconocieron ${newCandidates.length} concepto(s) del archivo.`);
     } catch (error) {
       console.error('No se pudo importar el archivo al catálogo:', error);
       setCatalogImportError(error.message || 'No se pudo leer el archivo. Inténtalo de nuevo.');
@@ -298,13 +305,16 @@ export default function App() {
       const quoteLines = catalogItemsToQuoteLines(items)
         .map((item, index) => ({ ...item, id: Date.now() + index }));
 
-      setActiveQuote((currentQuote) => ({
-        ...currentQuote,
-        items: [
-          ...(currentQuote.items || []).filter((item) => (item.description || '').trim()),
-          ...quoteLines
-        ]
-      }));
+      // ACUMULAR partidas en la cotización activa preservando las partidas ya existentes
+      setActiveQuote((currentQuote) => {
+        const existingItems = (currentQuote.items || []).filter(
+          (item) => (item.description || '').trim() !== '' || Number(item.unitPrice || 0) > 0
+        );
+        return {
+          ...currentQuote,
+          items: existingItems.length > 0 ? [...existingItems, ...quoteLines] : quoteLines
+        };
+      });
       notify(`Se agregaron ${quoteLines.length} partidas. Revisa los conceptos y precios antes de guardar.`);
     } catch (error) {
       console.error('No se pudo importar el archivo a la cotización:', error);
@@ -1633,7 +1643,7 @@ export default function App() {
               </div>
 
               <p className="text-xs leading-5 text-slate-400">
-                Importa una lista desde PDF o foto. Las partidas reconocidas se agregan aquí; revisa cada descripción e importe antes de guardar.
+                Importa una lista desde PDF o foto. Las partidas reconocidas se agregan aquí manteniendo las anteriores; revisa cada descripción e importe antes de guardar.
               </p>
 
               {isImportingQuote && (
@@ -2393,7 +2403,7 @@ export default function App() {
                     onClick={() => setCatalogImportCandidates([])}
                     className="text-xs font-semibold text-slate-400 hover:text-slate-200"
                   >
-                    Descartar
+                    Descartar todo
                   </button>
                 </div>
 
