@@ -35,6 +35,7 @@ import {
   WifiOff,
   Wifi
 } from 'lucide-react';
+import { CATALOG_CATEGORIES, catalogItemsToQuoteLines, suggestCatalogCategory } from './catalog-import.js';
 
 async function readApiResponse(response, fallbackMessage) {
   const responseText = await response.text();
@@ -101,6 +102,7 @@ export default function App() {
   const [userPlan, setUserPlan] = useState('gratis');
   const [creditsRemaining, setCreditsRemaining] = useState(0);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [selectedPlanToBuy, setSelectedPlanToBuy] = useState(null);
   const [account, setAccount] = useState(null);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
@@ -137,20 +139,30 @@ export default function App() {
   const [signatureTarget, setSignatureTarget] = useState('client');
 
   const canvasRef = useRef(null);
+  const catalogFileInputRef = useRef(null);
+  const quoteFileInputRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const isSyncingOfflineQuotesRef = useRef(false);
 
   const [newClient, setNewClient] = useState({ name: '', contact: '', phone: '', email: '', rfc: '', location: '' });
   const [clientSearch, setClientSearch] = useState('');
 
-  const [newCatalogItem, setNewCatalogItem] = useState({ concept: '', unit: 'Servicio', price: '' });
+  const [newCatalogItem, setNewCatalogItem] = useState({ concept: '', unit: 'Servicio', price: '', category: 'Otros' });
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogCategoryFilter, setCatalogCategoryFilter] = useState('Todas');
+  const [catalogImportCandidates, setCatalogImportCandidates] = useState([]);
+  const [catalogImportError, setCatalogImportError] = useState('');
+  const [catalogImportProgress, setCatalogImportProgress] = useState('');
+  const [isImportingCatalog, setIsImportingCatalog] = useState(false);
+  const [quoteImportError, setQuoteImportError] = useState('');
+  const [quoteImportProgress, setQuoteImportProgress] = useState('');
+  const [isImportingQuote, setIsImportingQuote] = useState(false);
 
   const [clients, setClients] = useState([]);
   const [catalog, setCatalog] = useState([
-    { id: 1, concept: 'Instalación de Minisplit 1.5 Ton Inverter', unit: 'Servicio', price: 3200 },
-    { id: 2, concept: 'Suministro y colocación de Muro de Tablaroca', unit: 'm²', price: 420 },
-    { id: 3, concept: 'Pintura vinílica acrílica a 2 manos', unit: 'm²', price: 140 }
+    { id: 1, concept: 'Instalación de Minisplit 1.5 Ton Inverter', unit: 'Servicio', price: 3200, category: 'Climatización' },
+    { id: 2, concept: 'Suministro y colocación de Muro de Tablaroca', unit: 'm²', price: 420, category: 'Construcción' },
+    { id: 3, concept: 'Pintura vinílica acrílica a 2 manos', unit: 'm²', price: 140, category: 'Acabados' }
   ]);
 
   const [quotes, setQuotes] = useState([]);
@@ -207,7 +219,13 @@ export default function App() {
       }
       if (savedCatalog) {
         const parsed = JSON.parse(savedCatalog);
-        if (Array.isArray(parsed)) setCatalog(parsed);
+        if (Array.isArray(parsed)) {
+          const categorizedCatalog = parsed.map((item) => ({
+            ...item,
+            category: item?.category || suggestCatalogCategory(item?.concept || '')
+          }));
+          setCatalog(categorizedCatalog);
+        }
       }
       if (savedQuotes) {
         const parsed = JSON.parse(savedQuotes);
@@ -242,6 +260,87 @@ export default function App() {
     setTimeout(() => setToast(''), 3000);
   };
 
+  const handleCatalogFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setCatalogImportError('');
+    setCatalogImportProgress('Preparando la lectura del archivo…');
+    setIsImportingCatalog(true);
+    try {
+      const { importCatalogFile } = await import('./catalog-file-reader.js');
+      const items = await importCatalogFile(file, setCatalogImportProgress);
+      setCatalogImportCandidates(items.map((item, index) => ({
+        ...item,
+        draftId: `${Date.now()}-${index}`
+      })));
+    } catch (error) {
+      console.error('No se pudo importar el archivo al catálogo:', error);
+      setCatalogImportError(error.message || 'No se pudo leer el archivo. Inténtalo de nuevo.');
+    } finally {
+      setIsImportingCatalog(false);
+      setCatalogImportProgress('');
+      event.target.value = '';
+    }
+  };
+
+  const handleQuoteFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setQuoteImportError('');
+    setQuoteImportProgress('Preparando la lectura del archivo…');
+    setIsImportingQuote(true);
+    try {
+      const { importCatalogFile } = await import('./catalog-file-reader.js');
+      const items = await importCatalogFile(file, setQuoteImportProgress);
+      const quoteLines = catalogItemsToQuoteLines(items)
+        .map((item, index) => ({ ...item, id: Date.now() + index }));
+
+      setActiveQuote((currentQuote) => ({
+        ...currentQuote,
+        items: [
+          ...(currentQuote.items || []).filter((item) => (item.description || '').trim()),
+          ...quoteLines
+        ]
+      }));
+      notify(`Se agregaron ${quoteLines.length} partidas. Revisa los conceptos y precios antes de guardar.`);
+    } catch (error) {
+      console.error('No se pudo importar el archivo a la cotización:', error);
+      setQuoteImportError(error.message || 'No se pudo leer el archivo. Inténtalo de nuevo.');
+    } finally {
+      setIsImportingQuote(false);
+      setQuoteImportProgress('');
+      event.target.value = '';
+    }
+  };
+
+  const saveCatalogImport = () => {
+    const importedItems = catalogImportCandidates
+      .filter((item) => item.concept.trim())
+      .map((item, index) => ({
+        id: Date.now() + index,
+        concept: item.concept.trim(),
+        unit: item.unit,
+        price: item.price === '' || item.price === null ? null : Number(item.price),
+        category: item.category
+      }));
+    if (importedItems.length === 0) return;
+
+    const updated = [...importedItems, ...(catalog || [])];
+    try {
+      localStorage.setItem('cotiq_catalog', JSON.stringify(updated));
+    } catch (error) {
+      console.error('No se pudo guardar la importación del catálogo:', error);
+      setCatalogImportError('No se pudieron guardar los conceptos en este dispositivo. Libera espacio e inténtalo de nuevo.');
+      return;
+    }
+    setCatalog(updated);
+    setCatalogImportCandidates([]);
+    setCatalogImportError('');
+    notify(`${importedItems.length} conceptos agregados al catálogo`);
+  };
+
   const handleClearAllStorage = () => {
     if (confirm("¿Deseas restablecer todos los datos guardados para iniciar 100% desde cero?")) {
       localStorage.clear();
@@ -263,6 +362,39 @@ export default function App() {
   const savePendingOfflineQuotes = (pendingQuotes) => {
     setPendingOfflineQuotes(pendingQuotes);
     localStorage.setItem('cotiq_pending_quote_ids', JSON.stringify(pendingQuotes));
+  };
+
+  const openNewQuoteEditor = () => {
+    setActiveQuote({
+      id: 'COT-' + Math.floor(1000 + Math.random() * 9000),
+      type: 'Cotización',
+      status: 'Borrador',
+      date: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }),
+      validityDays: '15',
+      inflationClause: true,
+      executionDays: '',
+      clientName: '',
+      clientContact: '',
+      clientPhone: '',
+      clientEmail: '',
+      clientRfc: '',
+      projectLocation: '',
+      scope: '',
+      exclusions: 'No incluye licencias municipales, retiro de escombro fuera de obra ni trabajos eléctricos no especificados.',
+      warrantyInfo: '6 meses de garantía sobre defectos de instalación y mano de obra.',
+      paymentMilestones: '50% Anticipo al autorizar, 30% Avance al 50% de obra, 20% Finiquito contra entrega.',
+      items: [{ id: Date.now(), quantity: 1, unit: 'Servicio', description: '', unitPrice: '' }],
+      photos: [],
+      advancePercent: '50',
+      discount: '0',
+      includeIVA: true,
+      signatureClient: '',
+      signatureIssuer: ''
+    });
+    setCostMaterials('');
+    setCostLabor('');
+    setActiveTab('quotes');
+    setViewMode('editor');
   };
 
   const applyAccountSnapshot = (user) => {
@@ -444,10 +576,19 @@ export default function App() {
         })
       });
       const data = await readApiResponse(response, 'No se pudo validar la cuenta.');
-
       applyAccountSnapshot(data.user);
       setAuthPassword('');
       setCheckoutError('');
+      if (showAuthModal) {
+        setShowAuthModal(false);
+        setLegalAccepted(false);
+        if (data.user.plan === 'vitalicia' || Number(data.user.credits) > 0) {
+          openNewQuoteEditor();
+        } else {
+          setActiveTab('plans');
+          notify('Sesión iniciada. Para crear cotizaciones, activa un paquete de créditos o una licencia vitalicia.');
+        }
+      }
     } catch (error) {
       console.error('Error de autenticación:', error);
       setAuthError(error.message || 'No se pudo conectar con el servidor.');
@@ -542,43 +683,22 @@ export default function App() {
   };
 
   const handleCreateNewQuote = () => {
-    if (isOnline && (!account || (userPlan !== 'vitalicia' && creditsRemaining <= 0))) {
-      alert(!account
-        ? 'Inicia sesión y adquiere créditos o una licencia vitalicia para crear cotizaciones.'
-        : 'Te has quedado sin créditos. Adquiere un paquete o una licencia vitalicia.');
-      setActiveTab('plans');
+    if (!account) {
+      setAuthMode('login');
+      setAuthError('');
+      setAuthPassword('');
+      setLegalAccepted(false);
+      setShowAuthModal(true);
       return;
     }
 
-    setActiveQuote({
-      id: 'COT-' + Math.floor(1000 + Math.random() * 9000),
-      type: 'Cotización',
-      status: 'Borrador',
-      date: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }),
-      validityDays: '15',
-      inflationClause: true,
-      executionDays: '',
-      clientName: '',
-      clientContact: '',
-      clientPhone: '',
-      clientEmail: '',
-      clientRfc: '',
-      projectLocation: '',
-      scope: '',
-      exclusions: 'No incluye licencias municipales, retiro de escombro fuera de obra ni trabajos eléctricos no especificados.',
-      warrantyInfo: '6 meses de garantía sobre defectos de instalación y mano de obra.',
-      paymentMilestones: '50% Anticipo al autorizar, 30% Avance al 50% de obra, 20% Finiquito contra entrega.',
-      items: [{ id: Date.now(), quantity: 1, unit: 'Servicio', description: '', unitPrice: '' }],
-      photos: [],
-      advancePercent: '50',
-      discount: '0',
-      includeIVA: true,
-      signatureClient: '',
-      signatureIssuer: ''
-    });
-    setCostMaterials('');
-    setCostLabor('');
-    setViewMode('editor');
+    if (userPlan !== 'vitalicia' && creditsRemaining <= 0) {
+      setActiveTab('plans');
+      notify('Necesitas créditos o una licencia vitalicia para crear cotizaciones.');
+      return;
+    }
+
+    openNewQuoteEditor();
   };
 
   const handleProcessSmartPrompt = () => {
@@ -692,7 +812,7 @@ export default function App() {
       ...activeQuote,
       items: [
         ...(activeQuote.items || []).filter(i => (i.description || '').trim() !== ''),
-        { id: Date.now(), quantity: 1, unit: item?.unit || 'Servicio', description: item?.concept || '', unitPrice: item?.price || 0 }
+        { id: Date.now(), quantity: 1, unit: item?.unit || 'Servicio', description: item?.concept || '', unitPrice: item?.price ?? '' }
       ]
     });
     notify(`Agregado: ${item?.concept || 'Servicio'}`);
@@ -1426,20 +1546,57 @@ export default function App() {
 
             {/* Partidas */}
             <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">
-                  3. Catálogo de Partidas y Precios Unitarios
+                  3. Partidas y Precios Unitarios
                 </span>
-                <button 
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    ref={quoteFileInputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,application/pdf,image/jpeg,image/png,image/webp,image/bmp"
+                    onChange={handleQuoteFileChange}
+                    className="hidden"
+                    aria-label="Seleccionar cotización en PDF o imagen para leer sus partidas"
+                  />
+                  <button
+                    type="button"
+                    disabled={isImportingQuote}
+                    onClick={() => quoteFileInputRef.current?.click()}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Upload className="h-3.5 w-3.5" />
+                      {isImportingQuote ? 'Leyendo archivo…' : 'Leer PDF o foto'}
+                    </span>
+                  </button>
+                  <button
                   onClick={() => setActiveQuote({
                     ...activeQuote,
                     items: [...(activeQuote.items || []), { id: Date.now(), quantity: 1, unit: 'Servicio', description: '', unitPrice: '' }]
                   })}
                   className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-bold"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Agregar Partida
-                </button>
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Agregar Partida
+                  </button>
+                </div>
               </div>
+
+              <p className="text-xs leading-5 text-slate-400">
+                Importa una lista desde PDF o foto. Las partidas reconocidas se agregan aquí; revisa cada descripción e importe antes de guardar.
+              </p>
+
+              {isImportingQuote && (
+                <div role="status" aria-live="polite" className="rounded-xl border border-emerald-500/30 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
+                  {quoteImportProgress}
+                </div>
+              )}
+
+              {quoteImportError && (
+                <div role="alert" className="rounded-xl border border-rose-900 bg-rose-950/50 px-3 py-2 text-xs text-rose-300">
+                  {quoteImportError}
+                </div>
+              )}
 
               {(activeQuote.items || []).map((item) => (
                 <div key={item.id} className="grid grid-cols-12 gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800 items-center">
@@ -1471,6 +1628,9 @@ export default function App() {
                       <option value="m³">m³</option>
                       <option value="ml">ml</option>
                       <option value="Lote">Lote</option>
+                      <option value="L">L</option>
+                      <option value="kg">kg</option>
+                      <option value="Hora">Hora</option>
                     </select>
                   </div>
 
@@ -1996,15 +2156,141 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-3">
               <div>
                 <h1 className="text-base font-bold text-slate-100">Catálogo de Conceptos y Precios</h1>
-                <p className="text-xs text-slate-400">Organiza tus servicios para cargarlos en 1 clic.</p>
+                <p className="text-xs text-slate-400">Organiza tus servicios para cargarlos en 1 clic. Las categorías de archivos se sugieren automáticamente.</p>
               </div>
-              <button
-                onClick={() => setShowCatalogModal(true)}
-                className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1 shadow-lg shadow-emerald-500/20"
-              >
-                <Plus className="w-4 h-4" /> Agregar Concepto
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={catalogFileInputRef}
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,application/pdf,image/jpeg,image/png,image/webp,image/bmp"
+                  onChange={handleCatalogFileChange}
+                  className="hidden"
+                  aria-label="Seleccionar lista de conceptos en PDF o imagen"
+                />
+                <button
+                  type="button"
+                  disabled={isImportingCatalog}
+                  onClick={() => catalogFileInputRef.current?.click()}
+                  className="bg-slate-800 hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60 text-slate-200 font-semibold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5"
+                >
+                  <Upload className="w-4 h-4" /> {isImportingCatalog ? 'Leyendo archivo…' : 'Importar PDF o foto'}
+                </button>
+                <button
+                  onClick={() => setShowCatalogModal(true)}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1 shadow-lg shadow-emerald-500/20"
+                >
+                  <Plus className="w-4 h-4" /> Agregar Concepto
+                </button>
+              </div>
             </div>
+
+            <p className="text-xs text-slate-400">
+              Sube una lista de servicios o materiales. Cotiq la lee en este dispositivo y propone una categoría para cada concepto; podrás revisar todo antes de guardarlo.
+            </p>
+
+            {isImportingCatalog && (
+              <div role="status" aria-live="polite" className="rounded-xl border border-emerald-500/30 bg-emerald-950/30 px-4 py-3 text-xs text-emerald-200">
+                {catalogImportProgress}
+              </div>
+            )}
+
+            {catalogImportError && (
+              <div role="alert" className="rounded-xl border border-rose-900 bg-rose-950/50 px-4 py-3 text-xs text-rose-300">
+                {catalogImportError}
+              </div>
+            )}
+
+            {catalogImportCandidates.length > 0 && (
+              <section aria-labelledby="catalog-import-title" className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 id="catalog-import-title" className="text-sm font-bold text-slate-100">Revisa los conceptos encontrados</h2>
+                    <p className="mt-1 text-xs text-slate-400">Confirma descripciones, precios y categorías. En las fotos, el reconocimiento puede confundir o no detectar algunas cifras.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCatalogImportCandidates([])}
+                    className="text-xs font-semibold text-slate-400 hover:text-slate-200"
+                  >
+                    Descartar
+                  </button>
+                </div>
+
+                <div className="max-h-[26rem] space-y-3 overflow-y-auto pr-1">
+                  {catalogImportCandidates.map((item, index) => (
+                    <div key={item.draftId} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-800 bg-slate-800/40 p-3 sm:grid-cols-[minmax(0,1fr)_7rem_10rem_7rem_2rem] sm:items-end">
+                      <label className="text-[11px] text-slate-400">
+                        Concepto
+                        <input
+                          type="text"
+                          value={item.concept}
+                          onChange={(event) => setCatalogImportCandidates((current) => current.map((entry, entryIndex) => (
+                            entryIndex === index ? { ...entry, concept: event.target.value } : entry
+                          )))}
+                          className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-2 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
+                        />
+                      </label>
+                      <label className="text-[11px] text-slate-400">
+                        Unidad
+                        <select
+                          value={item.unit}
+                          onChange={(event) => setCatalogImportCandidates((current) => current.map((entry, entryIndex) => (
+                            entryIndex === index ? { ...entry, unit: event.target.value } : entry
+                          )))}
+                          className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-2 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
+                        >
+                          {['Servicio', 'Pieza', 'm²', 'm³', 'ml', 'Lote', 'L', 'kg', 'Hora'].map((unit) => (
+                            <option key={unit} value={unit}>{unit}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="text-[11px] text-slate-400">
+                        Categoría sugerida
+                        <select
+                          value={CATALOG_CATEGORIES.includes(item.category) ? item.category : 'Otros'}
+                          onChange={(event) => setCatalogImportCandidates((current) => current.map((entry, entryIndex) => (
+                            entryIndex === index ? { ...entry, category: event.target.value } : entry
+                          )))}
+                          className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-2 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
+                        >
+                          {CATALOG_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-[11px] text-slate-400">
+                        Precio MXN
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.price ?? ''}
+                          onChange={(event) => setCatalogImportCandidates((current) => current.map((entry, entryIndex) => (
+                            entryIndex === index ? { ...entry, price: event.target.value } : entry
+                          )))}
+                          className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-2 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        aria-label={`Quitar concepto ${index + 1}`}
+                        onClick={() => setCatalogImportCandidates((current) => current.filter((_, entryIndex) => entryIndex !== index))}
+                        className="justify-self-end rounded-lg p-2 text-slate-500 hover:bg-rose-950/50 hover:text-rose-300 sm:justify-self-center"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={!catalogImportCandidates.some((item) => item.concept.trim())}
+                  onClick={saveCatalogImport}
+                  className="w-full rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-bold text-emerald-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                >
+                  Agregar {catalogImportCandidates.filter((item) => item.concept.trim()).length} conceptos al catálogo
+                </button>
+              </section>
+            )}
 
             <div className="relative w-full">
               <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
@@ -2017,17 +2303,37 @@ export default function App() {
               />
             </div>
 
+            <label className="block max-w-xs text-xs text-slate-400">
+              Filtrar por categoría
+              <select
+                value={catalogCategoryFilter}
+                onChange={(event) => setCatalogCategoryFilter(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
+              >
+                <option value="Todas">Todas las categorías</option>
+                {CATALOG_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+              </select>
+            </label>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {(catalog || [])
-                .filter(cat => (cat?.concept || '').toLowerCase().includes((catalogSearch || '').toLowerCase()))
+                .filter((cat) => `${cat?.concept || ''} ${cat?.category || suggestCatalogCategory(cat?.concept || '')}`.toLowerCase().includes((catalogSearch || '').toLowerCase()))
+                .filter((cat) => catalogCategoryFilter === 'Todas' || (cat?.category || suggestCatalogCategory(cat?.concept || '')) === catalogCategoryFilter)
                 .map(cat => (
                   <div key={cat.id || Math.random()} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-center hover:border-slate-700 transition-colors">
                     <div className="space-y-1">
                       <p className="font-bold text-xs text-slate-100">{cat?.concept || 'Sin descripción'}</p>
-                      <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px] font-mono inline-block">{cat?.unit || 'Servicio'}</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px] font-mono inline-block">{cat?.unit || 'Servicio'}</span>
+                        <span className="bg-emerald-950/40 text-emerald-300 px-2 py-0.5 rounded text-[10px] inline-block">{cat?.category || suggestCatalogCategory(cat?.concept || '')}</span>
+                      </div>
                     </div>
                     <div className="text-right flex items-center gap-2">
-                      <span className="font-bold text-sm text-emerald-400">${Number(cat?.price || 0).toLocaleString('es-MX')}</span>
+                      <span className="font-bold text-sm text-emerald-400">
+                        {cat?.price === null || cat?.price === '' || cat?.price === undefined
+                          ? 'Sin precio'
+                          : `$${Number(cat.price).toLocaleString('es-MX')} MXN`}
+                      </span>
                       <button
                         onClick={() => {
                           handleSelectCatalogItem(cat);
@@ -2068,11 +2374,17 @@ export default function App() {
                     onSubmit={(e) => {
                       e.preventDefault();
                       if (!newCatalogItem.concept.trim()) return;
-                      const created = { id: Date.now(), concept: newCatalogItem.concept, unit: newCatalogItem.unit, price: Number(newCatalogItem.price) || 0 };
+                      const created = {
+                        id: Date.now(),
+                        concept: newCatalogItem.concept,
+                        unit: newCatalogItem.unit,
+                        price: Number(newCatalogItem.price) || 0,
+                        category: newCatalogItem.category
+                      };
                       const updated = [created, ...(catalog || [])];
                       setCatalog(updated);
                       localStorage.setItem('cotiq_catalog', JSON.stringify(updated));
-                      setNewCatalogItem({ concept: '', unit: 'Servicio', price: '' });
+                      setNewCatalogItem({ concept: '', unit: 'Servicio', price: '', category: 'Otros' });
                       setShowCatalogModal(false);
                       notify('Concepto guardado');
                     }} 
@@ -2103,6 +2415,17 @@ export default function App() {
                         <option value="m³">m³</option>
                         <option value="ml">ml</option>
                         <option value="Lote">Lote</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Categoría</label>
+                      <select
+                        value={newCatalogItem.category}
+                        onChange={(e) => setNewCatalogItem({ ...newCatalogItem, category: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none"
+                      >
+                        {CATALOG_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
                       </select>
                     </div>
 
@@ -2388,6 +2711,99 @@ export default function App() {
               </div>
 
             </div>
+          </div>
+        )}
+
+        {showAuthModal && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-sm sm:items-center">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="quote-auth-title"
+              className="my-auto w-full max-w-md space-y-4 rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl"
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">
+                <div>
+                  <h2 id="quote-auth-title" className="text-lg font-bold text-slate-100">
+                    {authMode === 'register' ? 'Crea tu cuenta para cotizar' : 'Inicia sesión para cotizar'}
+                  </h2>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    {authMode === 'register'
+                      ? 'Regístrate para continuar con una nueva cotización.'
+                      : 'Inicia sesión o crea una cuenta para continuar con una nueva cotización.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAuthModal(false)}
+                  aria-label="Cerrar inicio de sesión"
+                  className="rounded-lg p-1 text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAuthSubmit} className="space-y-3 text-xs">
+                <label className="block text-slate-300">
+                  Correo electrónico
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    required
+                    maxLength={254}
+                    value={authEmail}
+                    onChange={(event) => setAuthEmail(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                  />
+                </label>
+                <label className="block text-slate-300">
+                  Contraseña
+                  <input
+                    type="password"
+                    autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+                    minLength={authMode === 'register' ? 12 : undefined}
+                    required
+                    value={authPassword}
+                    onChange={(event) => setAuthPassword(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                  />
+                </label>
+                {authMode === 'register' && (
+                  <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-slate-700 bg-slate-950 p-3 leading-5 text-slate-300">
+                    <input
+                      type="checkbox"
+                      required
+                      checked={legalAccepted}
+                      onChange={(event) => setLegalAccepted(event.target.checked)}
+                      className="mt-1 h-4 w-4 shrink-0 accent-emerald-400"
+                    />
+                    <span>
+                      Confirmo que tengo 18 años o más y acepto los <a className="text-emerald-300 underline underline-offset-2" href="/legal#terminos" target="_blank" rel="noreferrer">Términos</a> y el <a className="text-emerald-300 underline underline-offset-2" href="/legal#privacidad" target="_blank" rel="noreferrer">Aviso de privacidad</a>.
+                    </span>
+                  </label>
+                )}
+                {authError && <p role="alert" className="rounded-lg border border-rose-900 bg-rose-950/50 p-3 text-rose-300">{authError}</p>}
+                <button
+                  type="submit"
+                  disabled={isAuthenticating || (authMode === 'register' && !legalAccepted)}
+                  className="flex w-full items-center justify-center rounded-xl bg-emerald-500 py-2.5 font-bold text-emerald-950 transition-colors hover:bg-emerald-400 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isAuthenticating ? 'Procesando…' : authMode === 'register' ? 'Crear cuenta' : 'Iniciar sesión'}
+                </button>
+              </form>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode(authMode === 'register' ? 'login' : 'register');
+                  setAuthError('');
+                  setAuthPassword('');
+                  setLegalAccepted(false);
+                }}
+                className="w-full rounded-lg py-2 text-xs text-emerald-300 transition-colors hover:text-emerald-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400"
+              >
+                {authMode === 'register' ? '¿Ya tienes cuenta? Inicia sesión' : '¿Aún no tienes cuenta? Regístrate'}
+              </button>
+            </section>
           </div>
         )}
 

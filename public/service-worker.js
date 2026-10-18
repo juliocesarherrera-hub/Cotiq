@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cotiq-shell-v1';
+const CACHE_NAME = 'cotiq-shell-v3';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/cotiq-icon.svg'];
 
 self.addEventListener('install', (event) => {

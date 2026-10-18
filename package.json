@@ -9,9 +9,9 @@
     "dev:api": "node --watch server/start.js",
     "start": "node server/start.js",
     "build": "vite build",
-    "lint": "oxlint",
+    "lint": "oxlint --ignore-pattern public/ocr/**",
     "preview": "vite preview",
-    "test": "node --test server/payment-security.test.js server/vercel-handler.test.js"
+    "test": "node --test server/payment-security.test.js server/vercel-handler.test.js src/catalog-import.test.js"
   },
   "dependencies": {
     "@neon/config": "^1.9.1",
@@ -26,9 +26,11 @@
     "helmet": "^8.1.0",
     "lucide-react": "^1.55.0",
     "mercadopago": "^3.6.1",
+    "pdfjs-dist": "^4.10.38",
     "pg": "^8.16.3",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
