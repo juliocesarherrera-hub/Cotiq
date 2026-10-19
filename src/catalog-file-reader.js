@@ -1,4 +1,4 @@
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // Límite de 10 MB
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // Límite de 4 MB (compatible con Vercel Serverless)
 
 /**
  * Valida el tipo y tamaño del archivo seleccionado por el usuario.
@@ -15,7 +15,7 @@ function validateFile(file) {
   }
 
   if (file.size > MAX_FILE_SIZE) {
-    throw new Error('El archivo supera el límite de 10 MB. Elige una foto o PDF de menor tamaño.');
+    throw new Error('El archivo supera el límite de 4 MB para procesamiento en la nube. Elige una foto o PDF de menor tamaño.');
   }
 
   return isPdf;

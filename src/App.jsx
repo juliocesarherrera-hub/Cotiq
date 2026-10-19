@@ -372,7 +372,16 @@ export default function App() {
 
   const saveQuotesList = (newQuotes) => {
     setQuotes(newQuotes);
-    localStorage.setItem('cotiq_quotes', JSON.stringify(newQuotes));
+    try {
+      localStorage.setItem('cotiq_quotes', JSON.stringify(newQuotes));
+    } catch (error) {
+      if (error?.name === 'QuotaExceededError' || error?.code === 22) {
+        console.error('Límite de almacenamiento local excedido:', error);
+        notify('Espacio de almacenamiento local lleno. Reduce el tamaño o cantidad de fotos adjuntas.');
+      } else {
+        console.error('Error al guardar cotizaciones:', error);
+      }
+    }
   };
 
   const savePendingOfflineQuotes = (pendingQuotes) => {
@@ -744,6 +753,16 @@ export default function App() {
   const handleProcessSmartPrompt = async () => {
     if (!smartPromptText.trim()) return;
 
+    if (!account) {
+      setAuthMode('login');
+      setAuthError('');
+      setAuthPassword('');
+      setLegalAccepted(false);
+      setShowAuthModal(true);
+      notify('Inicia sesión para usar las funciones de Inteligencia Artificial.');
+      return;
+    }
+
     const activeModelObj = AI_MODELS.find(m => m.id === selectedAiModel);
     
     notify(`Procesando con ${activeModelObj?.name || 'IA'}...`);
@@ -770,6 +789,13 @@ export default function App() {
           prompt: systemPrompt
         })
       });
+
+      if (response.status === 401) {
+        setAccount(null);
+        setShowAuthModal(true);
+        notify('Tu sesión expiró. Inicia sesión para continuar.');
+        return;
+      }
 
       const data = await response.json();
 
@@ -801,18 +827,43 @@ export default function App() {
   };
 
   const handlePhotoUpload = (e) => {
-    const files = Array.from(e.target.files);
-    files.forEach(file => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    files.forEach((file) => {
+      if (!file.type.startsWith('image/')) return;
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setActiveQuote(prev => ({
-          ...prev,
-          photos: [...(prev.photos || []), reader.result]
-        }));
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDimension = 1200;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.72);
+          setActiveQuote((prev) => ({
+            ...prev,
+            photos: [...(prev.photos || []), compressedDataUrl]
+          }));
+        };
+        img.src = event.target.result;
       };
       reader.readAsDataURL(file);
     });
-    notify('Foto(s) de obra adjuntadas');
+    notify('Foto(s) de obra optimizadas y adjuntadas');
   };
 
   const handleDuplicateQuote = (quoteToDuplicate) => {
@@ -971,14 +1022,20 @@ export default function App() {
     recognitionRef.current = rec;
     rec.lang = 'es-MX';
     rec.continuous = true;
+    rec.interimResults = false;
 
     rec.onstart = () => setIsListening(true);
     rec.onresult = (e) => {
       let text = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        text += e.results[i][0].transcript;
+        const result = e.results[i];
+        if (result.isFinal || result[0]?.transcript) {
+          text += result[0].transcript;
+        }
       }
-      setSmartPromptText(prev => prev ? prev + ' ' + text : text);
+      if (text.trim()) {
+        setSmartPromptText(prev => prev ? `${prev.trim()} ${text.trim()}` : text.trim());
+      }
     };
     rec.onerror = (e) => {
       console.error("Error en dictado:", e.error);
@@ -1538,9 +1595,9 @@ export default function App() {
                   <Users className="w-3.5 h-3.5 text-emerald-400" /> Cargar Cliente:
                 </span>
                 <div className="flex gap-2">
-                  {clients.map(c => (
+                  {clients.map((c, idx) => (
                     <button
-                      key={c.id || Math.random()}
+                      key={c.id ?? `client-select-${idx}`}
                       onClick={() => handleSelectClient(c)}
                       className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 rounded-lg border border-slate-700 transition-colors flex-shrink-0"
                     >
@@ -1688,9 +1745,9 @@ export default function App() {
                   <Package className="w-3.5 h-3.5 text-emerald-400" /> Insertar del Catálogo:
                 </span>
                 <div className="flex gap-2">
-                  {catalog.map(cat => (
+                  {catalog.map((cat, idx) => (
                     <button
-                      key={cat.id || Math.random()}
+                      key={cat.id ?? `catalog-select-${idx}`}
                       onClick={() => handleSelectCatalogItem(cat)}
                       className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 rounded-lg border border-slate-700 transition-colors flex-shrink-0"
                     >
@@ -2313,8 +2370,8 @@ export default function App() {
                   (c?.name || '').toLowerCase().includes((clientSearch || '').toLowerCase()) || 
                   (c?.contact || '').toLowerCase().includes((clientSearch || '').toLowerCase())
                 )
-                .map(c => (
-                  <div key={c.id || Math.random()} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-start">
+                .map((c, idx) => (
+                  <div key={c.id ?? `client-card-${idx}`} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-start">
                     <div className="space-y-1">
                       <p className="font-bold text-sm text-slate-100">{c?.name || 'Sin nombre'}</p>
                       {c?.contact && <p className="text-xs text-slate-300">At'n: {c.contact}</p>}
@@ -2608,8 +2665,8 @@ export default function App() {
               {(catalog || [])
                 .filter((cat) => `${cat?.concept || ''} ${cat?.category || suggestCatalogCategory(cat?.concept || '')}`.toLowerCase().includes((catalogSearch || '').toLowerCase()))
                 .filter((cat) => catalogCategoryFilter === 'Todas' || (cat?.category || suggestCatalogCategory(cat?.concept || '')) === catalogCategoryFilter)
-                .map(cat => (
-                  <div key={cat.id || Math.random()} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-center hover:border-slate-700 transition-colors">
+                .map((cat, idx) => (
+                  <div key={cat.id ?? `catalog-card-${idx}`} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex justify-between items-center hover:border-slate-700 transition-colors">
                     <div className="space-y-1">
                       <p className="font-bold text-xs text-slate-100">{cat?.concept || 'Sin descripción'}</p>
                       <div className="flex flex-wrap gap-1.5">

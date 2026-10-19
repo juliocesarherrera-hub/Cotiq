@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { LockKeyhole, LogIn, UserPlus } from 'lucide-react';
 import { apiRequest } from './api.js';
+import { LEGAL_TERMS_VERSION } from '../legal-config.js';
 
 export default function AuthScreen({ onAuthenticated, initialError = '' }) {
   const [mode, setMode] = useState('login');
@@ -17,7 +18,13 @@ export default function AuthScreen({ onAuthenticated, initialError = '' }) {
     try {
       const result = await apiRequest(`/auth/${mode}`, {
         method: 'POST',
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({
+          email,
+          password,
+          ...(mode === 'register'
+            ? { acceptedTermsVersion: LEGAL_TERMS_VERSION, confirmedAdult: true }
+            : {})
+        })
       });
       onAuthenticated(result.user);
     } catch (requestError) {

@@ -113,7 +113,7 @@ function regenerateSession(req) {
 function authenticate(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Inicia sesión para continuar.' });
   pool
-    .query('SELECT id, email, has_lifetime, credits FROM users WHERE id = \$1', [req.session.userId])
+    .query('SELECT id, email, has_lifetime, credits FROM users WHERE id = $1', [req.session.userId])
     .then(({ rows }) => {
       if (!rows[0]) {
         req.session.destroy(() => {});
@@ -194,7 +194,7 @@ app.post('/api/payments/webhook', async (req, res, next) => {
 
     await inTransaction(async (client) => {
       const { rows } = await client.query(
-        'SELECT id, user_id, product_id, amount_cents, status FROM purchases WHERE id = \$1 FOR UPDATE',
+        'SELECT id, user_id, product_id, amount_cents, status FROM purchases WHERE id = $1 FOR UPDATE',
         [purchaseId]
       );
       const purchase = rows[0];
@@ -208,7 +208,7 @@ app.post('/api/payments/webhook', async (req, res, next) => {
         purchase.amount_cents === product.amountCents;
 
       if (!matchesPurchase) {
-        await client.query('UPDATE purchases SET status = \$2, updated_at = NOW() WHERE id = \$1', [
+        await client.query('UPDATE purchases SET status = $2, updated_at = NOW() WHERE id = $1', [
           purchase.id,
           'review_required'
         ]);
@@ -227,17 +227,17 @@ app.post('/api/payments/webhook', async (req, res, next) => {
       );
 
       if (status === 'approved' || isReversed) {
-        await client.query('SELECT id FROM users WHERE id = \$1 FOR UPDATE', [purchase.user_id]);
+        await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [purchase.user_id]);
         const { rows: userPurchases } = await client.query(
-          'SELECT product_id, status, fulfilled FROM purchases WHERE user_id = \$1',
+          'SELECT product_id, status, fulfilled FROM purchases WHERE user_id = $1',
           [purchase.user_id]
         );
         const { rows: consumptionRows } = await client.query(
-          'SELECT COUNT(*) AS count FROM credit_consumptions WHERE user_id = \$1',
+          'SELECT COUNT(*) AS count FROM credit_consumptions WHERE user_id = $1',
           [purchase.user_id]
         );
         const entitlements = deriveAccountEntitlements(userPurchases, Number(consumptionRows[0].count));
-        await client.query('UPDATE users SET has_lifetime = \$2, credits = \$3 WHERE id = \$1', [
+        await client.query('UPDATE users SET has_lifetime = $2, credits = $3 WHERE id = $1', [
           purchase.user_id,
           entitlements.hasLifetime,
           entitlements.credits
@@ -319,7 +319,7 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
   try {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const { rows } = await pool.query('SELECT id, email, password_hash, has_lifetime, credits FROM users WHERE email = \$1', [
+    const { rows } = await pool.query('SELECT id, email, password_hash, has_lifetime, credits FROM users WHERE email = $1', [
       email
     ]);
     const user = rows[0];
@@ -452,14 +452,14 @@ app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, re
       const checkoutUrl = isProduction ? preference.init_point : preference.sandbox_init_point;
       if (!checkoutUrl) throw new Error('Mercado Pago no devolvió una URL de checkout para esta preferencia.');
 
-      await pool.query('UPDATE purchases SET preference_id = \$2, status = \$3, updated_at = NOW() WHERE id = \$1', [
+      await pool.query('UPDATE purchases SET preference_id = $2, status = $3, updated_at = NOW() WHERE id = $1', [
         purchaseId,
         preference.id,
         'pending'
       ]);
       res.status(201).json({ purchaseId, checkoutUrl });
     } catch (error) {
-      await pool.query('UPDATE purchases SET status = \$2, updated_at = NOW() WHERE id = \$1', [purchaseId, 'checkout_error']);
+      await pool.query('UPDATE purchases SET status = $2, updated_at = NOW() WHERE id = $1', [purchaseId, 'checkout_error']);
       if (error.status === 401 || error.status === 403) {
         const policyCauses = Array.isArray(error.causes)
           ? error.causes.map((cause) => ({
@@ -501,7 +501,7 @@ app.get('/api/purchases/:purchaseId', authenticate, async (req, res, next) => {
       [req.params.purchaseId, req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'No se encontró esa compra en tu cuenta.' });
-    const { rows: accountRows } = await pool.query('SELECT id, email, has_lifetime, credits FROM users WHERE id = \$1', [
+    const { rows: accountRows } = await pool.query('SELECT id, email, has_lifetime, credits FROM users WHERE id = $1', [
       req.user.id
     ]);
     res.json({ purchase: rows[0], user: accountSnapshot(accountRows[0]) });
@@ -516,7 +516,7 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
     if (!quoteId || quoteId.length > 100) return res.status(400).json({ error: 'La cotización no es válida.' });
 
     const result = await inTransaction(async (client) => {
-      const { rows: users } = await client.query('SELECT id, has_lifetime, credits FROM users WHERE id = \$1 FOR UPDATE', [
+      const { rows: users } = await client.query('SELECT id, has_lifetime, credits FROM users WHERE id = $1 FOR UPDATE', [
         req.user.id
       ]);
       const user = users[0];
@@ -535,7 +535,7 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
         throw error;
       }
 
-      const { rows: updated } = await client.query('UPDATE users SET credits = credits - 1 WHERE id = \$1 RETURNING credits', [
+      const { rows: updated } = await client.query('UPDATE users SET credits = credits - 1 WHERE id = $1 RETURNING credits', [
         req.user.id
       ]);
       return { plan: 'creditos', credits: Number(updated[0].credits) };
