@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import html2pdf from 'html2pdf.js'; // AÑADIDO: Librería para exportar a PDF
 import { LEGAL_TERMS_VERSION } from '../legal-config.js';
 import { 
   FileText, 
@@ -38,7 +39,7 @@ import {
 } from 'lucide-react';
 import { CATALOG_CATEGORIES, catalogItemsToQuoteLines, suggestCatalogCategory } from './catalog-import.js';
 
-// 1. AÑADIDO: Definición de los modelos de IA disponibles
+// Definición de los modelos de IA disponibles
 const AI_MODELS = [
   { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Rápido)' },
   { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Preciso)' },
@@ -106,7 +107,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState('list'); 
   const [statusFilter, setStatusFilter] = useState('todos');
 
-  // 2. AÑADIDO: Estado para almacenar qué modelo de IA se encuentra seleccionado
+  // Estado para almacenar qué modelo de IA se encuentra seleccionado
   const [selectedAiModel, setSelectedAiModel] = useState(AI_MODELS[0].id);
 
   // Estado del Sistema de Licencias Funcional
@@ -142,6 +143,7 @@ export default function App() {
   const canvasRef = useRef(null);
   const catalogFileInputRef = useRef(null);
   const quoteFileInputRef = useRef(null);
+  const recognitionRef = useRef(null); // AÑADIDO: Referencia para detener el dictado
   const [isDrawing, setIsDrawing] = useState(false);
   const isSyncingOfflineQuotesRef = useRef(false);
 
@@ -573,12 +575,11 @@ export default function App() {
     setAuthError('');
 
     try {
-      // ---INICIO DEL TRUCO PARA SER DUEÑO AUTOMÁTICAMENTE---
       if (authEmail === 'herrera.jchm08@gmail.com') {
         const ownerUser = {
           id: 'admin-1',
           email: authEmail,
-          plan: 'vitalicia', // Acceso de por vida
+          plan: 'vitalicia', 
           credits: 9999
         };
         applyAccountSnapshot(ownerUser);
@@ -590,9 +591,8 @@ export default function App() {
           openNewQuoteEditor();
         }
         setIsAuthenticating(false);
-        return; // Detiene la función aquí para que no busque un servidor externo
+        return; 
       }
-      // --- FIN DEL TRUCO ---
 
       const response = await fetch(`/api/auth/${authMode === 'register' ? 'register' : 'login'}`, {
         method: 'POST',
@@ -734,10 +734,8 @@ export default function App() {
   const handleProcessSmartPrompt = async () => {
     if (!smartPromptText.trim()) return;
 
-    // 3. AHORA YA EXISTE la variable selectedAiModel y AI_MODELS
     const activeModelObj = AI_MODELS.find(m => m.id === selectedAiModel);
     
-    // CORRECCIÓN: Arregladas las comillas escapadas para que la interpolación funcione correctamente
     notify(`Procesando con ${activeModelObj?.name || 'IA'}...`);
 
     const systemPrompt = `Extrae las partidas de cotización del siguiente texto y responde EXCLUSIVAMENTE con un arreglo JSON válido (sin bloques de código markdown como \`\`\`json).
@@ -948,6 +946,7 @@ export default function App() {
     notify('Firma guardada con éxito');
   };
 
+  // FUNCIÓN AÑADIDA Y CORREGIDA: Toggle del dictado para detenerlo a voluntad
   const toggleVoice = () => {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Speech) {
@@ -956,11 +955,15 @@ export default function App() {
     }
 
     if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
       setIsListening(false);
       return;
     }
 
     const rec = new Speech();
+    recognitionRef.current = rec;
     rec.lang = 'es-MX';
     rec.continuous = true;
 
@@ -972,8 +975,35 @@ export default function App() {
       }
       setSmartPromptText(prev => prev ? prev + ' ' + text : text);
     };
+    rec.onerror = (e) => {
+      console.error("Error en dictado:", e.error);
+      setIsListening(false);
+    };
     rec.onend = () => setIsListening(false);
-    rec.start();
+    
+    try {
+      rec.start();
+    } catch (err) {
+      console.error(err);
+      setIsListening(false);
+    }
+  };
+
+  // FUNCIÓN AÑADIDA: Exportación de PDF nativa usando html2pdf.js
+  const handleDownloadPDF = () => {
+    const element = document.getElementById('pdf-content');
+    if (!element) return;
+    
+    const opt = {
+      margin:       [10, 10, 10, 10],
+      filename:     `${activeQuote.id}_${activeQuote.clientName || 'Cotizacion'}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2, useCORS: true, logging: false },
+      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(element).save();
+    notify('Descargando PDF...');
   };
 
   // Cálculos Financieros
@@ -1439,7 +1469,7 @@ export default function App() {
                   <Sparkles className="w-4 h-4 text-emerald-400" /> Generador Express por Texto o Voz
                 </span>
                 
-                {/* 4. AÑADIDO: Selector gráfico en la UI para elegir el modelo de IA y el botón dictar ajustado */}
+                {/* Selector de IA y botón de dictado con lógica de toggle */}
                 <div className="flex items-center gap-2">
                   <select
                     value={selectedAiModel}
@@ -1459,8 +1489,8 @@ export default function App() {
                         : 'bg-slate-950 text-slate-300 border-slate-700 hover:text-white'
                     }`}
                   >
-                    <Mic className="w-3.5 h-3.5" />
-                    {isListening ? 'Escuchando...' : 'Dictar todo'}
+                    {isListening ? <span className="w-2 h-2 rounded-full bg-rose-500 mr-1 animate-ping"></span> : <Mic className="w-3.5 h-3.5" />}
+                    {isListening ? 'Detener (Escuchando...)' : 'Dictar todo'}
                   </button>
                 </div>
               </div>
@@ -2026,7 +2056,7 @@ export default function App() {
                   <ArrowLeft className="w-3.5 h-3.5" /> Volver al Editor
                 </button>
                 <button
-                  onClick={() => window.print()}
+                  onClick={handleDownloadPDF}
                   className="px-3.5 py-1.5 bg-slate-100 hover:bg-white text-slate-950 font-bold rounded-xl transition-colors flex items-center gap-1.5"
                 >
                   <Printer className="w-3.5 h-3.5" /> Guardar PDF
@@ -2040,7 +2070,8 @@ export default function App() {
               </div>
             </div>
 
-            <div className="bg-white text-slate-900 p-8 sm:p-12 rounded-2xl border border-slate-200 shadow-2xl max-w-3xl mx-auto print:shadow-none print:border-none print:p-0">
+            {/* AÑADIDO: id="pdf-content" PARA HTML2PDF */}
+            <div id="pdf-content" className="bg-white text-slate-900 p-8 sm:p-12 rounded-2xl border border-slate-200 shadow-2xl max-w-3xl mx-auto print:shadow-none print:border-none print:p-0">
               
               <div className="flex justify-between items-start border-b-2 border-slate-900 pb-6 mb-6">
                 <div className="space-y-1">
@@ -3223,7 +3254,7 @@ export default function App() {
         <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#privacidad">Privacidad</a>
         <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#cookies">Cookies y almacenamiento</a>
         <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="/legal#compras">Compras y reembolsos</a>
-        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="mailto:TU_CORREO@gmail.com">Contacto</a>
+        <a className="hover:text-emerald-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" href="mailto:herrera.jchm08@gmail.com">Contacto</a>
       </footer>
     </div>
   );
