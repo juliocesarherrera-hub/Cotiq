@@ -59,17 +59,18 @@ export function parseSmartQuoteDraft(responseText) {
   assignText('clientPhone', draft.clientPhone, draft.telefono, draft.phone, client?.phone, client?.telefono);
   assignText('clientEmail', draft.clientEmail, draft.correo, draft.email, client?.email, client?.correo);
   assignText('clientRfc', draft.clientRfc, draft.rfc, client?.rfc);
-  assignText('projectLocation', draft.projectLocation, draft.ubicacionProyecto, draft.direccion, draft.location, client?.address, client?.direccion);
-  assignText('scope', draft.scope, draft.alcance, draft.alcanceIncluido);
-  assignText('executionDays', draft.executionDays, draft.plazoEjecucion, draft.plazo, draft.diasHabiles);
+  assignText('projectLocation', draft.projectLocation, draft.ubicacionProyecto, draft.direccion, draft.location, draft.ubicacion, client?.address, client?.direccion, client?.ubicacion);
+  assignText('scope', draft.scope, draft.alcance, draft.alcanceIncluido, draft.descripcion, draft.descripcionGeneral, draft.trabajos);
+  assignText('executionDays', draft.executionDays, draft.plazoEjecucion, draft.plazo, draft.diasHabiles, draft.tiempoEntrega);
   assignText('warrantyInfo', draft.warrantyInfo, draft.garantia, draft.warranty);
-  assignText('paymentMilestones', draft.paymentMilestones, draft.esquemaPagos, draft.pagos, draft.paymentTerms);
+  assignText('paymentMilestones', draft.paymentMilestones, draft.esquemaPagos, draft.pagos, draft.paymentTerms, draft.condicionesPago, draft.formaPago);
   assignText('exclusions', draft.exclusions, draft.exclusiones);
+  assignText('validityDays', draft.validityDays, draft.vigencia, draft.diasVigencia);
 
   const inflationClause = booleanValue(draft.inflationClause ?? draft.clausulaInflacion ?? draft.ajusteInflacion);
   const includeIVA = booleanValue(draft.includeIVA ?? draft.incluirIVA ?? draft.iva);
-  const advancePercent = percentageValue(draft.advancePercent ?? draft.anticipo);
-  const discount = percentageValue(draft.discount ?? draft.descuento);
+  const advancePercent = percentageValue(draft.advancePercent ?? draft.anticipo ?? draft.porcentajeAnticipo);
+  const discount = percentageValue(draft.discount ?? draft.descuento ?? draft.porcentajeDescuento);
   if (inflationClause !== undefined) fields.inflationClause = inflationClause;
   if (includeIVA !== undefined) fields.includeIVA = includeIVA;
   if (advancePercent !== undefined) fields.advancePercent = advancePercent;

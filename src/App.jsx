@@ -39,7 +39,7 @@ import {
   LogOut
 } from 'lucide-react';
 import { CATALOG_CATEGORIES, catalogItemsToQuoteLines, suggestCatalogCategory } from './catalog-import.js';
-import { parseSmartQuoteItems } from './quote-ai-parser.js';
+import { parseSmartQuoteDraft } from './quote-ai-draft-parser.js';
 
 // OpenRouter elige un modelo gratuito disponible; así se evita depender de IDs retirados.
 const AI_MODELS = [
@@ -767,18 +767,44 @@ export default function App() {
     
     notify(`Procesando con ${activeModelObj?.name || 'IA'}...`);
 
-    const systemPrompt = `Extrae las partidas de cotización del siguiente texto y responde EXCLUSIVAMENTE con un arreglo JSON válido (sin bloques de código markdown como \`\`\`json).
-    Cada objeto del arreglo debe tener la siguiente estructura exacta:
-    [
-    {
-    "quantity": 2,
-    "unit": "Servicio",
-    "description": "Instalación de Minisplit",
-    "unitPrice": 3200
-    }
-    ]
+    const systemPrompt = `Eres un asistente experto para contratistas y técnicos en México que elaboran cotizaciones.
+Analiza el siguiente texto (procedente de dictado por voz o escrito por el usuario) y extrae de forma estructurada TODA la información que contenga para la cotización.
 
-    Texto del usuario: "${smartPromptText}"`;
+Responde ÚNICAMENTE con un objeto JSON válido (sin comentarios, sin texto adicional y sin bloques de código markdown como \`\`\`json):
+{
+  "cliente": {
+    "nombre": "Nombre del cliente o razón social",
+    "contacto": "Persona de contacto o atención si se menciona",
+    "telefono": "Teléfono si se menciona",
+    "correo": "Correo electrónico si se menciona",
+    "rfc": "RFC si se menciona",
+    "direccion": "Dirección o ubicación del proyecto/obra"
+  },
+  "alcance": "Alcance de los trabajos o descripción general",
+  "plazoEjecucion": "Plazo de ejecución o entrega (ej. 5 días hábiles)",
+  "esquemaPagos": "Esquema o condiciones de pago (ej. 50% anticipo, 50% contra entrega)",
+  "anticipo": 50,
+  "garantia": "Garantía si se menciona",
+  "exclusiones": "Exclusiones o lo que no incluye si se menciona",
+  "vigencia": "15",
+  "incluirIVA": true,
+  "items": [
+    {
+      "cantidad": 2,
+      "unidad": "Servicio",
+      "concepto": "Instalación de Minisplit",
+      "precio": 3200
+    }
+  ]
+}
+
+Reglas:
+1. Extrae: 1) Datos del cliente, 2) Alcance, plazo, esquema de pagos, anticipo y exclusiones, 3) Partidas y precios unitarios.
+2. Si el usuario no menciona algún dato (como RFC o correo), omítelo o déjalo vacío. No inventes información.
+3. Si el usuario solo menciona partidas, extrae las partidas en "items".
+4. En cada partida de "items": "cantidad" debe ser número, "unidad" (ej. Servicio, Pieza, Metro, m2, Lote, Hora), "concepto" el nombre del trabajo o material, y "precio" el precio unitario numérico en pesos sin símbolos.
+
+Texto del usuario: "${smartPromptText}"`;
 
     try {
       const response = await fetch('/api/generate', {
@@ -803,22 +829,60 @@ export default function App() {
         throw new Error(data.error || 'Error al procesar la solicitud con el servidor.');
       }
 
-      const parsedItems = parseSmartQuoteItems(data.text);
+      const { fields, items: parsedItems } = parseSmartQuoteDraft(data.text);
+      const newItems = (parsedItems || []).map((item, idx) => ({
+        id: Date.now() + idx,
+        ...item
+      }));
 
-      if (parsedItems.length > 0) {
-        const newItems = parsedItems.map((item, idx) => ({
-          id: Date.now() + idx,
-          ...item
-        }));
+      const hasFields = fields && Object.keys(fields).length > 0;
+      const hasItems = newItems.length > 0;
 
-        setActiveQuote(prev => ({
-          ...prev,
-          items: [...(prev.items || []).filter(i => (i.description || '').trim() !== ''), ...newItems]
-        }));
+      if (hasFields || hasItems) {
+        setActiveQuote(prev => {
+          const currentItems = prev.items || [];
+          const hasExistingNonEmptyItems = currentItems.some(i => (i.description || '').trim() !== '' || Number(i.unitPrice || 0) > 0);
+          const updatedItems = hasItems
+            ? (hasExistingNonEmptyItems ? [...currentItems.filter(i => (i.description || '').trim() !== ''), ...newItems] : newItems)
+            : currentItems;
+
+          return {
+            ...prev,
+            ...fields,
+            items: updatedItems
+          };
+        });
+
+        if (fields.clientName) {
+          setClients(prevClients => {
+            const exists = (prevClients || []).some(c => (c.name || '').toLowerCase() === fields.clientName.toLowerCase());
+            if (!exists) {
+              const newClient = {
+                id: Date.now(),
+                name: fields.clientName,
+                contact: fields.clientContact || '',
+                phone: fields.clientPhone || '',
+                email: fields.clientEmail || '',
+                rfc: fields.clientRfc || '',
+                location: fields.projectLocation || ''
+              };
+              const updatedClients = [newClient, ...(prevClients || [])];
+              localStorage.setItem('cotiq_clients', JSON.stringify(updatedClients));
+              return updatedClients;
+            }
+            return prevClients;
+          });
+        }
+
         setSmartPromptText('');
-        notify(`${newItems.length} partida(s) procesadas con ${activeModelObj?.name || 'IA'}`);
+        const summary = [];
+        if (fields.clientName) summary.push(`Cliente: ${fields.clientName}`);
+        if (hasItems) summary.push(`${newItems.length} partida(s)`);
+        if (fields.executionDays) summary.push(`Plazo: ${fields.executionDays}`);
+        if (fields.paymentMilestones) summary.push(`Pagos: ${fields.paymentMilestones}`);
+        notify(`Cotización actualizada: ${summary.length > 0 ? summary.join(' · ') : 'Datos cargados con IA'}`);
       } else {
-        notify('La IA no encontró conceptos utilizables. Prueba con cantidades, descripciones y precios más claros.');
+        notify('La IA no encontró información utilizable. Prueba dictando el cliente, condiciones y partidas.');
       }
     } catch (error) {
       console.error('Error al procesar prompt inteligente:', error);
@@ -1574,7 +1638,7 @@ export default function App() {
               <div className="flex gap-2">
                 <input 
                   type="text"
-                  placeholder='Escribe o dicta: "2 minisplit a 3200 pesos, 50 m2 de tablaroca a 420 pesos"'
+                  placeholder='Escribe o dicta: "Cliente Juan Pérez 4421234567, 2 minisplit a 3200, 5 días de entrega, 50% anticipo..."'
                   value={smartPromptText}
                   onChange={(e) => setSmartPromptText(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleProcessSmartPrompt()}
