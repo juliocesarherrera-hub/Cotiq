@@ -39,6 +39,7 @@ import {
   LogOut
 } from 'lucide-react';
 import { CATALOG_CATEGORIES, catalogItemsToQuoteLines, suggestCatalogCategory } from './catalog-import.js';
+import { parseSmartQuoteItems } from './quote-ai-parser.js';
 
 // OpenRouter elige un modelo gratuito disponible; así se evita depender de IDs retirados.
 const AI_MODELS = [
@@ -776,17 +777,12 @@ export default function App() {
         throw new Error(data.error || 'Error al procesar la solicitud con el servidor.');
       }
 
-      // Limpieza del JSON retornado por la IA
-      const cleanJson = data.text.replace(/```json|```/g, '').trim();
-      const parsedItems = JSON.parse(cleanJson);
+      const parsedItems = parseSmartQuoteItems(data.text);
 
-      if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+      if (parsedItems.length > 0) {
         const newItems = parsedItems.map((item, idx) => ({
           id: Date.now() + idx,
-          quantity: Number(item.quantity) || 1,
-          unit: item.unit || 'Servicio',
-          description: item.description || '',
-          unitPrice: item.unitPrice || ''
+          ...item
         }));
 
         setActiveQuote(prev => ({
@@ -796,7 +792,7 @@ export default function App() {
         setSmartPromptText('');
         notify(`${newItems.length} partida(s) procesadas con ${activeModelObj?.name || 'IA'}`);
       } else {
-        notify('No se pudieron extraer partidas válidas.');
+        notify('La IA no encontró conceptos utilizables. Prueba con cantidades, descripciones y precios más claros.');
       }
     } catch (error) {
       console.error('Error al procesar prompt inteligente:', error);
