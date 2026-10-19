@@ -30,6 +30,9 @@ const sessionCookie = 'pf.sid';
 const PgSessionStore = connectPgSimple(session);
 let initialization;
 
+// Maintains the owner's testing account even when a deployment has not yet configured ADMIN_EMAILS.
+const DEFAULT_ADMIN_EMAILS = Object.freeze(['herrera.jchm08@gmail.com']);
+
 const OPENROUTER_MODELS = Object.freeze({
   'gemini-1.5-flash': 'google/gemini-2.0-flash:free',
   'gemini-1.5-pro': 'google/gemini-2.0-pro-exp-02-05:free',
@@ -89,8 +92,9 @@ function accountSnapshot(user) {
 
 function isAdministrator(user) {
   if (!user?.email) return false;
-  const adminEmails = (process.env.ADMIN_EMAILS || '')
-    .split(',')
+  const configuredAdminEmails = (process.env.ADMIN_EMAILS || '')
+    .split(',');
+  const adminEmails = [...DEFAULT_ADMIN_EMAILS, ...configuredAdminEmails]
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
   return adminEmails.includes(String(user.email).trim().toLowerCase());
