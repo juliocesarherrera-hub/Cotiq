@@ -7,12 +7,10 @@ export default async function handler(req, res) {
 
   // Modelos gratuitos de OpenRouter actualizados
   const modelMapping = {
-    'gemini-1.5-flash': 'google/gemini-2.0-flash:free', 
-    'gemini-1.5-pro': 'google/gemini-2.0-pro-exp-02-05:free',
-    'gpt-4o-mini': 'meta-llama/llama-3.3-70b-instruct:free'
+    'openrouter-free': 'openrouter/free'
   };
 
-  const openRouterModel = modelMapping[modelId] || 'google/gemini-2.0-flash:free';
+  const openRouterModel = modelMapping[modelId] || 'openrouter/free';
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {

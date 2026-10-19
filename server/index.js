@@ -34,9 +34,7 @@ let initialization;
 const DEFAULT_ADMIN_EMAILS = Object.freeze(['herrera.jchm08@gmail.com']);
 
 const OPENROUTER_MODELS = Object.freeze({
-  'gemini-1.5-flash': 'google/gemini-2.0-flash:free',
-  'gemini-1.5-pro': 'google/gemini-2.0-pro-exp-02-05:free',
-  'gpt-4o-mini': 'meta-llama/llama-3.3-70b-instruct:free'
+  'openrouter-free': 'openrouter/free'
 });
 
 export { app };
@@ -363,7 +361,7 @@ app.post('/api/generate', authenticate, aiLimiter, async (req, res, next) => {
   try {
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
     const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId : '';
-    const model = OPENROUTER_MODELS[modelId] || OPENROUTER_MODELS['gemini-1.5-flash'];
+    const model = OPENROUTER_MODELS[modelId] || OPENROUTER_MODELS['openrouter-free'];
     const apiKey = process.env.OPENROUTER_API_KEY?.trim();
 
     if (!prompt || prompt.length > 12000) {

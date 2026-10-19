@@ -35,15 +35,14 @@ import {
   Zap,
   WifiOff,
   Wifi,
-  ArrowLeft
+  ArrowLeft,
+  LogOut
 } from 'lucide-react';
 import { CATALOG_CATEGORIES, catalogItemsToQuoteLines, suggestCatalogCategory } from './catalog-import.js';
 
-// Definición de los modelos de IA disponibles
+// OpenRouter elige un modelo gratuito disponible; así se evita depender de IDs retirados.
 const AI_MODELS = [
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Rápido)' },
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Preciso)' },
-  { id: 'gpt-4o-mini', name: 'GPT-4o Mini' }
+  { id: 'openrouter-free', name: 'IA gratuita (automática)' }
 ];
 
 function createQuoteId() {
@@ -717,6 +716,30 @@ export default function App() {
     openNewQuoteEditor();
   };
 
+  const handleLogout = async () => {
+    if (!isOnline) {
+      notify('Conéctate a internet para cerrar sesión de forma segura.');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!response.ok && response.status !== 401) {
+        await readApiResponse(response, 'No se pudo cerrar la sesión.');
+      }
+      setAccount(null);
+      setUserPlan('gratis');
+      setCreditsRemaining(0);
+      localStorage.removeItem('cotiq_account_id');
+      setActiveTab('quotes');
+      setViewMode('list');
+      notify('Sesión cerrada. Tus cotizaciones locales permanecen en este dispositivo.');
+    } catch (error) {
+      console.error('No se pudo cerrar la sesión:', error);
+      notify(error.message || 'No se pudo cerrar la sesión. Inténtalo de nuevo.');
+    }
+  };
+
   const handleProcessSmartPrompt = async () => {
     if (!smartPromptText.trim()) return;
 
@@ -1141,6 +1164,20 @@ export default function App() {
               <Award className="w-3.5 h-3.5 text-emerald-400" /> Licencia
             </button>
           </nav>
+
+          {account && (
+            <div className="flex items-center justify-between sm:justify-end gap-2 text-xs">
+              <span className="max-w-44 truncate text-slate-400" title={account.email}>{account.email}</span>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-2 font-semibold text-slate-300 transition-colors hover:border-slate-500 hover:bg-slate-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 focus-visible:outline-offset-2"
+                aria-label="Cerrar sesión"
+              >
+                <LogOut className="h-3.5 w-3.5" /> Cerrar sesión
+              </button>
+            </div>
+          )}
 
         </div>
       </header>
