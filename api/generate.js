@@ -5,14 +5,14 @@ export default async function handler(req, res) {
 
   const { prompt, modelId } = req.body;
 
-  // Redirigimos tus opciones a los modelos 100% gratuitos de OpenRouter
+  // Modelos gratuitos de OpenRouter actualizados
   const modelMapping = {
-    'gemini-1.5-flash': 'google/gemini-2.0-flash-lite-preview-02-05:free', // Súper rápido de Google
-    'gemini-1.5-pro': 'google/gemini-2.0-flash-exp:free',                  // Versión avanzada de Google
-    'gpt-4o-mini': 'meta-llama/llama-3.3-70b-instruct:free'                // Versión de Meta (Facebook)
+    'gemini-1.5-flash': 'google/gemini-2.0-flash:free', 
+    'gemini-1.5-pro': 'google/gemini-2.0-pro-exp-02-05:free',
+    'gpt-4o-mini': 'meta-llama/llama-3.3-70b-instruct:free'
   };
 
-  const openRouterModel = modelMapping[modelId] || 'google/gemini-2.0-flash-lite-preview-02-05:free';
+  const openRouterModel = modelMapping[modelId] || 'google/gemini-2.0-flash:free';
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {

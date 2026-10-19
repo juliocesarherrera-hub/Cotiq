@@ -573,7 +573,7 @@ export default function App() {
     setAuthError('');
 
     try {
-      // --- INICIO DEL TRUCO PARA SER DUEÑO AUTOMÁTICAMENTE ---
+      // ---INICIO DEL TRUCO PARA SER DUEÑO AUTOMÁTICAMENTE---
       if (authEmail === 'herrera.jchm08@gmail.com') {
         const ownerUser = {
           id: 'admin-1',
