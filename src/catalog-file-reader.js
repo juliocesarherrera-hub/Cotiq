@@ -8,7 +8,7 @@ function validateFile(file) {
   const isPdf = file.type === 'application/pdf' || name.endsWith('.pdf');
   const isImage =
     ['image/jpeg', 'image/png', 'image/webp', 'image/bmp'].includes(file.type) ||
-    /\.(jpe?g|png|webp|bmp)\$/i.test(name);
+    /\.(jpe?g|png|webp|bmp)$/i.test(name);
 
   if (!isPdf && !isImage) {
     throw new Error('Selecciona un archivo PDF o una imagen (JPG, PNG, WEBP o BMP).');

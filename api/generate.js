@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({ text: data.choices[0].message.content });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ error: 'Error interno del servidor al contactar a la IA.' });
   }
 }

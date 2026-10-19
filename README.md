@@ -10,6 +10,8 @@ Checkout Pro es la mejor opción para los dos productos actuales de Cotiq: un pa
 
 Requisitos: Node.js 20.19 o posterior y PostgreSQL 13 o posterior.
 
+Para usar el prompt inteligente, configura `OPENROUTER_API_KEY` solo en el servidor. Para habilitar acceso ilimitado de pruebas en una cuenta propia, define `ADMIN_EMAILS` con una lista de correos separados por coma. El usuario todavía debe iniciar sesión con su contraseña; este valor no debe exponerse como una variable `VITE_*`.
+
 1. Crea una base de datos PostgreSQL para Cotiq y configura `DATABASE_URL` para apuntar a ella.
 2. Copia `.env.example` a `.env` y configura `DATABASE_URL`, un `SESSION_SECRET` aleatorio de al menos 32 bytes y tus credenciales de prueba de Mercado Pago. En desarrollo se aceptan credenciales de prueba `TEST-` y `APP_USR-` (Checkout Pro puede usar este último prefijo también en la pestaña **Prueba**); el checkout local siempre usa la URL sandbox. En producción exige `NODE_ENV=production`, `APP_ORIGIN` HTTPS y un token de producción `APP_USR-`.
 3. En Mercado Pago Developers crea una aplicación de tipo pagos online, activa Checkout Pro y copia el **Access token de prueba** y el **secreto de firma de webhooks** a `.env`. Son credenciales distintas: `MERCADOPAGO_WEBHOOK_SECRET` no debe contener el Access Token. No pongas ninguna credencial `ACCESS_TOKEN` en `src/` ni en variables `VITE_*`.

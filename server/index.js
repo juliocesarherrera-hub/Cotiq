@@ -30,6 +30,12 @@ const sessionCookie = 'pf.sid';
 const PgSessionStore = connectPgSimple(session);
 let initialization;
 
+const OPENROUTER_MODELS = Object.freeze({
+  'gemini-1.5-flash': 'google/gemini-2.0-flash:free',
+  'gemini-1.5-pro': 'google/gemini-2.0-pro-exp-02-05:free',
+  'gpt-4o-mini': 'meta-llama/llama-3.3-70b-instruct:free'
+});
+
 export { app };
 
 function validateEnvironment() {
@@ -71,12 +77,23 @@ export function initializeServer() {
 }
 
 function accountSnapshot(user) {
+  const isAdmin = isAdministrator(user);
   return {
     id: user.id,
     email: user.email,
-    plan: user.has_lifetime ? 'vitalicia' : Number(user.credits) > 0 ? 'creditos' : 'gratis',
-    credits: Number(user.credits)
+    plan: isAdmin || user.has_lifetime ? 'vitalicia' : Number(user.credits) > 0 ? 'creditos' : 'gratis',
+    credits: isAdmin ? 9999 : Number(user.credits),
+    isAdmin
   };
+}
+
+function isAdministrator(user) {
+  if (!user?.email) return false;
+  const adminEmails = (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+  return adminEmails.includes(String(user.email).trim().toLowerCase());
 }
 
 function saveSession(req) {
@@ -251,6 +268,7 @@ app.use(
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false });
 const checkoutLimiter = rateLimit({ windowMs: 60 * 1000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false });
+const aiLimiter = rateLimit({ windowMs: 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false });
 
 app.get('/api/health', async (req, res, next) => {
   try {
@@ -270,7 +288,7 @@ app.post('/api/auth/register', authLimiter, async (req, res, next) => {
     }
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+\$/.test(email) || email.length > 254) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
       return res.status(400).json({ error: 'Escribe un correo electrónico válido.' });
     }
     if (password.length < 12 || Buffer.byteLength(password, 'utf8') > 72) {
@@ -335,6 +353,44 @@ app.post('/api/auth/logout', authenticate, (req, res, next) => {
 
 app.get('/api/account', authenticate, (req, res) => {
   res.json({ user: accountSnapshot(req.user) });
+});
+
+app.post('/api/generate', authenticate, aiLimiter, async (req, res, next) => {
+  try {
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId : '';
+    const model = OPENROUTER_MODELS[modelId] || OPENROUTER_MODELS['gemini-1.5-flash'];
+    const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+
+    if (!prompt || prompt.length > 12000) {
+      return res.status(400).json({ error: 'El texto para procesar debe tener entre 1 y 12,000 caracteres.' });
+    }
+    if (!apiKey) return res.status(503).json({ error: 'La función de IA no está configurada en el servidor.' });
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const error = new Error(data.error?.message || 'La IA no pudo procesar la solicitud.');
+      error.status = response.status >= 400 && response.status < 500 ? 502 : 503;
+      throw error;
+    }
+    const text = data.choices?.[0]?.message?.content;
+    if (typeof text !== 'string') {
+      const error = new Error('La IA devolvió una respuesta inesperada.');
+      error.status = 502;
+      throw error;
+    }
+    res.json({ text });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post('/api/payments/checkout', authenticate, checkoutLimiter, async (req, res, next) => {
@@ -462,6 +518,7 @@ app.post('/api/credits/consume', authenticate, async (req, res, next) => {
         req.user.id
       ]);
       const user = users[0];
+      if (isAdministrator(user)) return { plan: 'vitalicia', credits: 9999, isAdmin: true };
       if (user.has_lifetime) return { plan: 'vitalicia', credits: Number(user.credits) };
 
       const { rows: inserted } = await client.query(
@@ -501,7 +558,7 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
       return res.status(400).json({ error: 'No se subió ningún archivo.' });
     }
 
-    const apiKey = rawKey.trim().replace(/^["']|["']\$/g, '');
+    const apiKey = rawKey.trim().replace(/^["']|["']$/g, '');
     const ai = new GoogleGenAI({ apiKey });
     const base64Data = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype || 'image/jpeg';

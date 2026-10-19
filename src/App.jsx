@@ -46,6 +46,11 @@ const AI_MODELS = [
   { id: 'gpt-4o-mini', name: 'GPT-4o Mini' }
 ];
 
+function createQuoteId() {
+  if (globalThis.crypto?.randomUUID) return `COT-${globalThis.crypto.randomUUID()}`;
+  return `COT-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 async function readApiResponse(response, fallbackMessage) {
   const responseText = await response.text();
   let data = {};
@@ -177,7 +182,7 @@ export default function App() {
 
   // Cotización Activa
   const [activeQuote, setActiveQuote] = useState({
-    id: 'COT-' + Math.floor(1000 + Math.random() * 9000),
+    id: createQuoteId(),
     type: 'Cotización',
     status: 'Borrador',
     date: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }),
@@ -377,7 +382,7 @@ export default function App() {
 
   const openNewQuoteEditor = () => {
     setActiveQuote({
-      id: 'COT-' + Math.floor(1000 + Math.random() * 9000),
+      id: createQuoteId(),
       type: 'Cotización',
       status: 'Borrador',
       date: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }),
@@ -575,25 +580,6 @@ export default function App() {
     setAuthError('');
 
     try {
-      if (authEmail === 'herrera.jchm08@gmail.com') {
-        const ownerUser = {
-          id: 'admin-1',
-          email: authEmail,
-          plan: 'vitalicia', 
-          credits: 9999
-        };
-        applyAccountSnapshot(ownerUser);
-        setAuthPassword('');
-        setCheckoutError('');
-        if (showAuthModal) {
-          setShowAuthModal(false);
-          setLegalAccepted(false);
-          openNewQuoteEditor();
-        }
-        setIsAuthenticating(false);
-        return; 
-      }
-
       const response = await fetch(`/api/auth/${authMode === 'register' ? 'register' : 'login'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -813,7 +799,7 @@ export default function App() {
   const handleDuplicateQuote = (quoteToDuplicate) => {
     const cloned = {
       ...quoteToDuplicate,
-      id: 'COT-' + Math.floor(1000 + Math.random() * 9000),
+      id: createQuoteId(),
       date: new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }),
       status: 'Borrador'
     };

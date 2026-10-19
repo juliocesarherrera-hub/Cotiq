@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
+import { LEGAL_TERMS_VERSION } from '../legal-config.js';
 
 process.env.NODE_ENV = 'development';
 process.env.APP_ORIGIN = 'http://localhost:4173';
@@ -36,6 +37,34 @@ test('Vercel API handler initializes and dispatches Express routes', async (t) =
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { status: 'ok' });
+
+  const registerResponse = await fetch(`http://127.0.0.1:${port}/api/auth/register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: 'http://localhost:4173'
+    },
+    body: JSON.stringify({
+      email: 'persona@ejemplo.com',
+      password: 'correct-horse-battery-staple',
+      acceptedTermsVersion: LEGAL_TERMS_VERSION,
+      confirmedAdult: true
+    })
+  });
+
+  // The database mock returns no inserted row, so reaching 409 proves the email passed format validation.
+  assert.equal(registerResponse.status, 409);
+
+  const generateResponse = await fetch(`http://127.0.0.1:${port}/api/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: 'http://localhost:4173'
+    },
+    body: JSON.stringify({ modelId: 'gemini-1.5-flash', prompt: 'Partidas de prueba' })
+  });
+
+  assert.equal(generateResponse.status, 401);
 
   const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
     method: 'POST',
