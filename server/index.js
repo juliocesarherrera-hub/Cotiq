@@ -579,42 +579,69 @@ app.post('/api/importar-catalogo', authenticate, upload.single('archivo'), async
        - Ignora encabezados, fechas, números de teléfono, direcciones, SUBTOTAL, IVA y TOTAL final.
        - Asigna la unidad adecuada (Pieza, Servicio, etc.) y una categoría sugerida.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: prompt },
+    const candidateModels = [
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash-lite',
+      'gemini-3-flash',
+      'gemini-2.5-flash'
+    ];
+
+    let lastError = null;
+    let responseText = null;
+
+    for (const model of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [
             {
-              inlineData: {
-                data: base64Data,
-                mimeType: mimeType
+              role: 'user',
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    data: base64Data,
+                    mimeType: mimeType
+                  }
+                }
+              ]
+            }
+          ],
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.ARRAY,
+              description: 'Lista de productos o servicios extraídos',
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  concepto: { type: Type.STRING, description: 'Nombre o descripción del producto o servicio' },
+                  unidad: { type: Type.STRING, description: 'Servicio, Pieza, Hora, etc.' },
+                  categoria: { type: Type.STRING, description: 'Categoría sugerida' },
+                  precio: { type: Type.NUMBER, description: 'Precio unitario como número entero puro' }
+                },
+                required: ['concepto', 'unidad', 'categoria', 'precio']
               }
             }
-          ]
-        }
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          description: 'Lista de productos o servicios extraídos',
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              concepto: { type: Type.STRING, description: 'Nombre o descripción del producto o servicio' },
-              unidad: { type: Type.STRING, description: 'Servicio, Pieza, Hora, etc.' },
-              categoria: { type: Type.STRING, description: 'Categoría sugerida' },
-              precio: { type: Type.NUMBER, description: 'Precio unitario como número entero puro' }
-            },
-            required: ['concepto', 'unidad', 'categoria', 'precio']
           }
-        }
-      }
-    });
+        });
 
-    const conceptos = JSON.parse(response.text);
+        if (response && response.text) {
+          responseText = response.text;
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+        console.warn(`[Gemini Fallback] El modelo ${model} no respondió (${err.status || err.message}). Probando siguiente...`);
+      }
+    }
+
+    if (!responseText) {
+      throw lastError || new Error('No se pudo procesar el documento con ninguno de los modelos disponibles.');
+    }
+
+    const conceptos = JSON.parse(responseText);
     res.json({ success: true, conceptos });
   } catch (error) {
     console.error('Error detallado de Gemini API:', error);
